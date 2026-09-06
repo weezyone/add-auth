@@ -14,16 +14,18 @@ A React + TypeScript + Vite example showing how to integrate with the `@paulweez
 ## Quick Start
 
 ```bash
-# 1. Make sure the auth API is running on port 3000
-cd ../.. && npm run dev
+# 1. From the repository root: allow this origin, then start the API
+#    FRONTEND_URL must include http://localhost:5173 (see example-apps/README.md)
+npx ts-node src/database/migrate.ts migrate
+npm run dev
 
 # 2. Install dependencies and start the React app
-cd examples/react-auth-demo
+cd example-apps/react-auth-demo
 npm install
 npm run dev
 ```
 
-The app runs on `http://localhost:5173`.
+The app runs on `http://localhost:5173`. If register/login return 403, fetch CSRF with cookies first (`GET /api/auth/csrf-token`) — details in [example-apps/README.md](../README.md).
 
 ## How It Works
 
