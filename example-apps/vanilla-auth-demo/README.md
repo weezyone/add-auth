@@ -13,16 +13,18 @@ A plain HTML, CSS, and JavaScript example showing how to integrate with the `@pa
 ## Quick Start
 
 ```bash
-# 1. Make sure the auth API is running on port 3000
-cd ../.. && npm run dev
+# 1. From the repository root: allow this origin, then start the API
+#    FRONTEND_URL must include http://localhost:5500 (see example-apps/README.md)
+npx ts-node src/database/migrate.ts migrate
+npm run dev
 
 # 2. Serve the static files (any static server works)
-cd examples/vanilla-auth-demo
+cd example-apps/vanilla-auth-demo
 npx serve -l 5500
 # Or: python3 -m http.server 5500
 ```
 
-Open `http://localhost:5500` in your browser.
+Open `http://localhost:5500` in your browser. If register/login return 403, fetch CSRF with cookies first (`GET /api/auth/csrf-token`) — details in [example-apps/README.md](../README.md).
 
 ## How It Works
 
