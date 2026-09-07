@@ -1,6 +1,7 @@
 module.exports = {
   testEnvironment: 'node',
   testMatch: ['**/__tests__/**/*.test.ts'],
+  setupFiles: ['<rootDir>/jest.setup.js'],
   clearMocks: true,
   // Several modules schedule cleanup via module-level setInterval (e.g. session.ts,
   // passwordReset.ts), which keeps the Jest worker alive after tests finish. Force
