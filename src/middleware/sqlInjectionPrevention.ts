@@ -238,7 +238,7 @@ export const sqlInjectionPrevention = (config: SQLInjectionConfig = {}) => {
             }
 
             if (cfg.blockRequests) {
-              return res.status(400).json({
+              return void res.status(400).json({
                 error: 'Malicious input detected',
                 message: 'Request blocked due to potential SQL injection attack'
               });
@@ -462,7 +462,7 @@ export class SecureQueryBuilder {
     
     // WHERE clause
     if (Object.keys(conditions).length > 0) {
-      const whereClauses = [];
+      const whereClauses: string[] = [];
       for (const [column, value] of Object.entries(conditions)) {
         if (!this.validateColumn(table, column)) {
           throw new Error(`Invalid column: ${column}`);
@@ -635,7 +635,7 @@ export const sqlInjectionDetectionFields = (fields: string[], config: SQLInjecti
               const attemptKey = `${req.ip}_${field}_sql_injection`;
               logger.warn('Tracking SQL injection attempt', { attemptKey });
               
-              return res.status(400).json({
+              return void res.status(400).json({
                 error: 'Malicious input detected',
                 message: `SQL injection detected in field: ${field}`,
                 timestamp: new Date().toISOString()
@@ -708,7 +708,9 @@ class PreparedStatementCache {
     if (this.cache.size >= this.maxSize) {
       // Remove oldest entry
       const firstKey = this.cache.keys().next().value;
-      this.cache.delete(firstKey);
+      if (firstKey !== undefined) {
+        this.cache.delete(firstKey);
+      }
     }
     this.cache.set(key, preparedQuery);
   }

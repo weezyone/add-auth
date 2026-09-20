@@ -260,7 +260,7 @@ export function requireOwnership(resourceUserIdField: string = 'user_id') {
           path: req.path,
         });
 
-        return res.status(400).json({
+        return void res.status(400).json({
           error: 'Bad request',
           message: 'Resource user ID not found',
           code: 'RESOURCE_USER_ID_MISSING',

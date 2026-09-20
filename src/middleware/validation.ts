@@ -21,6 +21,29 @@ import {
  */
 export type ValidationTarget = 'body' | 'query' | 'params' | 'headers';
 
+class RequestFieldAssigner {
+  static set(req: Request, target: ValidationTarget, value: unknown): void {
+    switch (target) {
+      case 'body':
+        req.body = value;
+        return;
+      case 'query':
+        req.query = value as Request['query'];
+        return;
+      case 'params':
+        req.params = value as Request['params'];
+        return;
+      case 'headers':
+        Object.assign(req.headers, value as Request['headers']);
+        return;
+      default: {
+        const exhaustive: never = target;
+        throw new Error(`Unsupported validation target: ${String(exhaustive)}`);
+      }
+    }
+  }
+}
+
 /**
  * Validation options
  */
@@ -122,6 +145,24 @@ export const validationSchemas = {
     rememberMe: Joi.boolean()
       .optional()
       .default(false)
+  }),
+
+  refreshToken: Joi.object({
+    refreshToken: Joi.string()
+      .required()
+      .messages({
+        'any.required': 'Refresh token is required'
+      })
+  }),
+
+  emailParam: Joi.object({
+    email: Joi.string()
+      .email({ tlds: { allow: false } })
+      .required()
+      .messages({
+        'string.email': 'Please provide a valid email address',
+        'any.required': 'Email is required'
+      })
   }),
 
   // Password reset request schema
@@ -524,7 +565,7 @@ export const validate = (schema: Joi.ObjectSchema, options: ValidationOptions = 
     const language = detectLanguage(req);
     
     if (!targetData) {
-      return res.status(400).json({
+      return void res.status(400).json({
         error: 'Validation failed',
         message: getLocalizedMessage('FIELD_REQUIRED', language),
         language,
@@ -545,7 +586,7 @@ export const validate = (schema: Joi.ObjectSchema, options: ValidationOptions = 
             path: req.path
           });
           const errorObj = getLocalizedError('XSS_ATTEMPT_DETECTED', language);
-          return res.status(400).json({
+          return void res.status(400).json({
             error: 'Security validation failed',
             message: errorObj.message,
             code: errorObj.code,
@@ -567,7 +608,7 @@ export const validate = (schema: Joi.ObjectSchema, options: ValidationOptions = 
             path: req.path
           });
           const errorObj = getLocalizedError('SQL_INJECTION_DETECTED', language);
-          return res.status(400).json({
+          return void res.status(400).json({
             error: 'Security validation failed',
             message: errorObj.message,
             code: errorObj.code,
@@ -660,7 +701,7 @@ export const validate = (schema: Joi.ObjectSchema, options: ValidationOptions = 
           path: req.path
         });
 
-        return res.status(400).json(createValidationErrorResponse(
+        return void res.status(400).json(createValidationErrorResponse(
           validationErrors.map(err => ({
             field: err.field,
             code: err.code,
@@ -696,7 +737,7 @@ export const validate = (schema: Joi.ObjectSchema, options: ValidationOptions = 
               }
               
               const errorObj = getLocalizedError(errorCode, language);
-              return res.status(400).json({
+              return void res.status(400).json({
                 error: 'Validation failed',
                 message: errorObj.message,
                 code: errorObj.code,
@@ -711,11 +752,11 @@ export const validate = (schema: Joi.ObjectSchema, options: ValidationOptions = 
       }
 
       // Replace the target data with the validated and sanitized value
-      req[opts.target! as keyof Request] = value;
+      RequestFieldAssigner.set(req, opts.target!, value);
       next();
     } catch (validationError) {
       logger.error('Validation middleware error:', validationError);
-      return res.status(500).json({
+      return void res.status(500).json({
         error: 'Internal server error',
         message: getLocalizedMessage('FIELD_REQUIRED', language),
         language,
@@ -800,7 +841,7 @@ export const sanitizeInput = (target: ValidationTarget = 'body') => {
       const targetData = req[target];
       
       if (targetData && typeof targetData === 'object') {
-        req[target as keyof Request] = sanitizeObject(targetData);
+        RequestFieldAssigner.set(req, target, sanitizeObject(targetData));
       }
       
       next();
@@ -1454,7 +1495,7 @@ export const rateLimitValidation = (limit: number, windowMs: number) => {
       const retryAfter = Math.ceil((record.resetTime - now) / 1000);
       const errorObj = getLocalizedError('RATE_LIMIT_EXCEEDED', language, { retryAfter });
       
-      return res.status(429).json({
+      return void res.status(429).json({
         error: 'Rate limit exceeded',
         message: errorObj.message,
         code: errorObj.code,

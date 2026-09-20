@@ -105,8 +105,8 @@ export class SessionModel {
     input: UpdateSessionInput,
     client?: PoolClient
   ): Promise<Session | null> {
-    const fields = [];
-    const values = [];
+    const fields: string[] = [];
+    const values: unknown[] = [];
     let paramIndex = 1;
 
     if (input.expires_at !== undefined) {

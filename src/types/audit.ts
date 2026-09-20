@@ -13,15 +13,15 @@ export interface AuditLog {
 }
 
 export interface CreateAuditLogInput {
-  user_id?: string;
+  user_id?: string | null;
   action: string;
   resource_type: string;
-  resource_id?: string;
+  resource_id?: string | null;
   ip_address: string;
-  user_agent?: string;
+  user_agent?: string | null;
   details?: Record<string, any>;
   success: boolean;
-  error_message?: string;
+  error_message?: string | null;
 }
 
 export enum AuditActions {

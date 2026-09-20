@@ -4,7 +4,7 @@
  */
 
 import { Request, Response, NextFunction } from 'express';
-import xss from 'xss';
+import xss, { escapeAttrValue } from 'xss';
 import { logger } from '../utils/logger';
 import crypto from 'crypto';
 
@@ -89,7 +89,7 @@ const defaultXSSConfig: XSSProtectionConfig = {
         return '';
       }
     }
-    return `${name}="${xss.escapeAttrValue(value)}"`;
+    return `${name}="${escapeAttrValue(value)}"`;
   }
 };
 
@@ -490,9 +490,13 @@ export const detectXSS = (input: string): { detected: boolean; patterns: string[
           if (pattern.source.includes('script') || pattern.source.includes('eval') || pattern.source.includes('Function')) {
             severity = 'critical';
           } else if (pattern.source.includes('iframe') || pattern.source.includes('object') || pattern.source.includes('embed')) {
-            severity = severity === 'critical' ? 'critical' : 'high';
+            if (severity !== 'critical') {
+              severity = 'high';
+            }
           } else if (pattern.source.includes('on\\w+') || pattern.source.includes('javascript:')) {
-            severity = severity === 'critical' || severity === 'high' ? severity : 'medium';
+            if (severity === 'low') {
+              severity = 'medium';
+            }
           }
         }
       }

@@ -16,16 +16,14 @@ passport.deserializeUser(async (id: string, done) => {
   try {
     const user = await UserModel.findById(id);
     if (user) {
-      // Get user roles
       const roles = await RoleModel.getUserRoles(user.id);
-      const userWithRoles = { ...user, roles };
-      done(null, userWithRoles);
+      done(null, { ...user, roles: roles.map(role => role.name) });
     } else {
-      done(null, null);
+      done(null, false);
     }
   } catch (error) {
     logger.error('Error deserializing user', { userId: id, error });
-    done(error, null);
+    done(error);
   }
 });
 
@@ -108,7 +106,7 @@ if (appConfig.oauth.google.clientId && appConfig.oauth.google.clientSecret) {
                 });
               }
             } else {
-              return done(new Error('No email provided by Google'), null);
+              return done(new Error('No email provided by Google'));
             }
           } else {
             // Update OAuth tokens
@@ -122,14 +120,11 @@ if (appConfig.oauth.google.clientId && appConfig.oauth.google.clientSecret) {
             });
           }
 
-          // Get user roles
           const roles = await RoleModel.getUserRoles(user.id);
-          const userWithRoles = { ...user, roles };
-          
-          return done(null, userWithRoles);
+          return done(null, { ...user, roles: roles.map(role => role.name) });
         } catch (error) {
           logger.error('Error in Google OAuth strategy', { error });
-          return done(error, null);
+          return done(error);
         }
       }
     )
@@ -218,7 +213,7 @@ if (appConfig.oauth.github.clientId && appConfig.oauth.github.clientSecret) {
                 });
               }
             } else {
-              return done(new Error('No email provided by GitHub'), null);
+              return done(new Error('No email provided by GitHub'));
             }
           } else {
             // Update OAuth tokens
@@ -232,14 +227,11 @@ if (appConfig.oauth.github.clientId && appConfig.oauth.github.clientSecret) {
             });
           }
 
-          // Get user roles
           const roles = await RoleModel.getUserRoles(user.id);
-          const userWithRoles = { ...user, roles };
-          
-          return done(null, userWithRoles);
+          return done(null, { ...user, roles: roles.map(role => role.name) });
         } catch (error) {
           logger.error('Error in GitHub OAuth strategy', { error });
-          return done(error, null);
+          return done(error);
         }
       }
     )

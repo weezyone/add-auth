@@ -120,8 +120,8 @@ export class RoleModel {
     input: UpdateRoleInput,
     client?: PoolClient
   ): Promise<Role | null> {
-    const fields = [];
-    const values = [];
+    const fields: string[] = [];
+    const values: unknown[] = [];
     let paramIndex = 1;
 
     if (input.name !== undefined) {

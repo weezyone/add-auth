@@ -23,7 +23,7 @@ router.get('/google/callback',
       
       if (!user) {
         logger.warn('OAuth callback received without user data');
-        return res.redirect('/login?error=oauth_failed');
+        return void res.redirect('/login?error=oauth_failed');
       }
 
       // Generate device fingerprint
@@ -52,6 +52,8 @@ router.get('/google/callback',
         action: 'oauth_login',
         resource_type: 'user',
         resource_id: user.id,
+        ip_address: fingerprint.ip,
+        success: true,
         details: {
           provider: 'google',
           ip_address: fingerprint.ip,
@@ -92,7 +94,7 @@ router.get('/github/callback',
       
       if (!user) {
         logger.warn('OAuth callback received without user data');
-        return res.redirect('/login?error=oauth_failed');
+        return void res.redirect('/login?error=oauth_failed');
       }
 
       // Generate device fingerprint
@@ -121,6 +123,8 @@ router.get('/github/callback',
         action: 'oauth_login',
         resource_type: 'user',
         resource_id: user.id,
+        ip_address: fingerprint.ip,
+        success: true,
         details: {
           provider: 'github',
           ip_address: fingerprint.ip,
@@ -150,7 +154,7 @@ router.get('/github/callback',
 router.get('/link/google', 
   (req, res, next) => {
     if (!req.session.isAuthenticated) {
-      return res.status(401).json({ error: 'Authentication required' });
+      return void res.status(401).json({ error: 'Authentication required' });
     }
     next();
   },
@@ -163,7 +167,7 @@ router.get('/link/google',
 router.get('/link/github', 
   (req, res, next) => {
     if (!req.session.isAuthenticated) {
-      return res.status(401).json({ error: 'Authentication required' });
+      return void res.status(401).json({ error: 'Authentication required' });
     }
     next();
   },
@@ -177,14 +181,14 @@ router.get('/link/github',
 router.post('/unlink/:provider', async (req, res) => {
   try {
     if (!req.session.isAuthenticated || !req.session.userId) {
-      return res.status(401).json({ error: 'Authentication required' });
+      return void res.status(401).json({ error: 'Authentication required' });
     }
 
     const { provider } = req.params;
     const userId = req.session.userId;
 
     if (!['google', 'github'].includes(provider)) {
-      return res.status(400).json({ error: 'Invalid OAuth provider' });
+      return void res.status(400).json({ error: 'Invalid OAuth provider' });
     }
 
     // Import UserModel dynamically to avoid circular dependency
@@ -193,15 +197,17 @@ router.post('/unlink/:provider', async (req, res) => {
     const unlinked = await UserModel.unlinkOAuthAccount(userId, provider);
 
     if (unlinked) {
-      // Log account unlinking
+      const fingerprint = FingerprintService.generateFingerprint(req);
       await AuditLogModel.create({
         user_id: userId,
         action: 'oauth_unlink',
         resource_type: 'user',
         resource_id: userId,
+        ip_address: fingerprint.ip,
+        success: true,
         details: {
           provider,
-          ip_address: FingerprintService.generateFingerprint(req).ip,
+          ip_address: fingerprint.ip,
         },
       });
 
@@ -220,7 +226,7 @@ router.post('/unlink/:provider', async (req, res) => {
 router.get('/accounts', async (req, res) => {
   try {
     if (!req.session.isAuthenticated || !req.session.userId) {
-      return res.status(401).json({ error: 'Authentication required' });
+      return void res.status(401).json({ error: 'Authentication required' });
     }
 
     const userId = req.session.userId;

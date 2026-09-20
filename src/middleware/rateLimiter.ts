@@ -4,21 +4,29 @@
  */
 
 import { rateLimit } from 'express-rate-limit';
-import { RedisStore } from 'rate-limit-redis';
+import { RedisStore, SendCommandFn, RedisReply } from 'rate-limit-redis';
 import { Redis } from 'ioredis';
 import { Request, Response, NextFunction } from 'express';
 import { logger } from '../utils/logger';
 import { appConfig } from '../config';
 
-// Redis client configuration
 const redisClient = new Redis({
   host: process.env.REDIS_HOST || 'localhost',
-  port: parseInt(process.env.REDIS_PORT || '6379'),
-  password: process.env.REDIS_PASSWORD,
-  retryDelayOnFailover: 100,
+  port: parseInt(process.env.REDIS_PORT || '6379', 10),
+  password: process.env.REDIS_PASSWORD || undefined,
   maxRetriesPerRequest: 3,
   lazyConnect: true,
 });
+
+class RateLimitRedisCommands {
+  static sendCommand: SendCommandFn = async (...args: string[]): Promise<RedisReply> => {
+    const [command, ...commandArgs] = args;
+    if (!command) {
+      throw new Error('Redis command is required');
+    }
+    return redisClient.call(command, commandArgs) as Promise<RedisReply>;
+  };
+}
 
 // Redis connection event handlers
 redisClient.on('connect', () => {
@@ -40,7 +48,7 @@ export const rateLimiters = {
   // General API rate limiting
   general: rateLimit({
     store: new RedisStore({
-      sendCommand: (...args: string[]) => redisClient.call(...args),
+      sendCommand: (...args: string[]) => RateLimitRedisCommands.sendCommand(...args),
     }),
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 100, // limit each IP to 100 requests per windowMs
@@ -72,7 +80,7 @@ export const rateLimiters = {
   // Authentication endpoints (more restrictive)
   auth: rateLimit({
     store: new RedisStore({
-      sendCommand: (...args: string[]) => redisClient.call(...args),
+      sendCommand: (...args: string[]) => RateLimitRedisCommands.sendCommand(...args),
     }),
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 10, // limit each IP to 10 auth attempts per windowMs
@@ -103,7 +111,7 @@ export const rateLimiters = {
   // Password reset endpoints (very restrictive)
   passwordReset: rateLimit({
     store: new RedisStore({
-      sendCommand: (...args: string[]) => redisClient.call(...args),
+      sendCommand: (...args: string[]) => RateLimitRedisCommands.sendCommand(...args),
     }),
     windowMs: 60 * 60 * 1000, // 1 hour
     max: 3, // limit each IP to 3 password reset attempts per hour
@@ -134,7 +142,7 @@ export const rateLimiters = {
   // Login endpoints (alias for auth)
   login: rateLimit({
     store: new RedisStore({
-      sendCommand: (...args: string[]) => redisClient.call(...args),
+      sendCommand: (...args: string[]) => RateLimitRedisCommands.sendCommand(...args),
     }),
     windowMs: 15 * 60 * 1000,
     max: 10,
@@ -146,7 +154,7 @@ export const rateLimiters = {
   // Refresh token endpoints
   refresh: rateLimit({
     store: new RedisStore({
-      sendCommand: (...args: string[]) => redisClient.call(...args),
+      sendCommand: (...args: string[]) => RateLimitRedisCommands.sendCommand(...args),
     }),
     windowMs: 15 * 60 * 1000,
     max: 30,
@@ -158,7 +166,7 @@ export const rateLimiters = {
   // Admin action endpoints
   adminActions: rateLimit({
     store: new RedisStore({
-      sendCommand: (...args: string[]) => redisClient.call(...args),
+      sendCommand: (...args: string[]) => RateLimitRedisCommands.sendCommand(...args),
     }),
     windowMs: 15 * 60 * 1000,
     max: 50,
@@ -170,7 +178,7 @@ export const rateLimiters = {
   // Registration endpoints
   registration: rateLimit({
     store: new RedisStore({
-      sendCommand: (...args: string[]) => redisClient.call(...args),
+      sendCommand: (...args: string[]) => RateLimitRedisCommands.sendCommand(...args),
     }),
     windowMs: 60 * 60 * 1000, // 1 hour
     max: 5, // limit each IP to 5 registrations per hour
@@ -211,7 +219,7 @@ export const createCustomRateLimiter = (options: {
 }) => {
   return rateLimit({
     store: new RedisStore({
-      sendCommand: (...args: string[]) => redisClient.call(...args),
+      sendCommand: (...args: string[]) => RateLimitRedisCommands.sendCommand(...args),
     }),
     windowMs: options.windowMs,
     max: options.max,
@@ -253,7 +261,7 @@ export const createUserRateLimiter = (options: {
 }) => {
   return rateLimit({
     store: new RedisStore({
-      sendCommand: (...args: string[]) => redisClient.call(...args),
+      sendCommand: (...args: string[]) => RateLimitRedisCommands.sendCommand(...args),
     }),
     windowMs: options.windowMs,
     max: options.max,

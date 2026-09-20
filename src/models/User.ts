@@ -103,8 +103,8 @@ export class UserModel {
     input: UpdateUserInput,
     client?: PoolClient
   ): Promise<UserWithoutPassword | null> {
-    const fields = [];
-    const values = [];
+    const fields: string[] = [];
+    const values: unknown[] = [];
     let paramIndex = 1;
 
     if (input.email !== undefined) {

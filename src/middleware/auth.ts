@@ -1,17 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import { verifyToken, extractTokenFromHeader } from '../utils/jwt';
 import { enforceTokenBlacklist } from '../utils/tokenBlacklist';
-import { JWTPayload, TokenBlacklistedError } from '../types/jwt';
+import { TokenBlacklistedError } from '../types/jwt';
 import { logger } from '../utils/logger';
-
-// Extend Express Request interface to include user
-declare global {
-  namespace Express {
-    interface Request {
-      user?: JWTPayload;
-    }
-  }
-}
 
 /**
  * Authentication middleware that validates JWT tokens

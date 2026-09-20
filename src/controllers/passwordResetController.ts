@@ -25,7 +25,7 @@ export const requestPasswordReset = async (req: Request, res: Response) => {
     if (userResult.rows.length === 0) {
       // Don't reveal if user exists or not for security
       logger.warn('Password reset requested for non-existent user', { email, ipAddress });
-      return res.status(200).json({
+      return void res.status(200).json({
         success: true,
         message: 'If an account with this email exists, you will receive a password reset link.'
       });
@@ -50,7 +50,7 @@ export const requestPasswordReset = async (req: Request, res: Response) => {
 
     if (!emailSent) {
       logger.error('Failed to send password reset email', { email, userId: user.id });
-      return res.status(500).json({
+      return void res.status(500).json({
         success: false,
         error: 'Failed to send password reset email'
       });
@@ -78,7 +78,7 @@ export const requestPasswordReset = async (req: Request, res: Response) => {
     logger.error('Password reset request failed:', error);
     
     if (error instanceof Error && error.message.includes('Too many')) {
-      return res.status(429).json({
+      return void res.status(429).json({
         success: false,
         error: 'Too many password reset attempts',
         message: error.message
@@ -101,7 +101,7 @@ export const verifyPasswordResetToken = async (req: Request, res: Response) => {
     const { token } = req.params;
 
     if (!token) {
-      return res.status(400).json({
+      return void res.status(400).json({
         success: false,
         error: 'Token is required'
       });
@@ -111,7 +111,7 @@ export const verifyPasswordResetToken = async (req: Request, res: Response) => {
     const tokenData = await passwordResetManager.validatePasswordResetToken(token);
 
     if (!tokenData) {
-      return res.status(400).json({
+      return void res.status(400).json({
         success: false,
         error: 'Invalid or expired token'
       });
@@ -122,7 +122,7 @@ export const verifyPasswordResetToken = async (req: Request, res: Response) => {
     const userResult = await db.query(userQuery, [tokenData.userId]);
 
     if (userResult.rows.length === 0) {
-      return res.status(400).json({
+      return void res.status(400).json({
         success: false,
         error: 'Invalid token'
       });
@@ -158,7 +158,7 @@ export const resetPassword = async (req: Request, res: Response) => {
     const userAgent = req.get('user-agent');
 
     if (!token || !password) {
-      return res.status(400).json({
+      return void res.status(400).json({
         success: false,
         error: 'Token and password are required'
       });
@@ -168,7 +168,7 @@ export const resetPassword = async (req: Request, res: Response) => {
     const tokenData = await passwordResetManager.validatePasswordResetToken(token);
 
     if (!tokenData) {
-      return res.status(400).json({
+      return void res.status(400).json({
         success: false,
         error: 'Invalid or expired token'
       });
@@ -179,7 +179,7 @@ export const resetPassword = async (req: Request, res: Response) => {
     const userResult = await db.query(userQuery, [tokenData.userId]);
 
     if (userResult.rows.length === 0) {
-      return res.status(400).json({
+      return void res.status(400).json({
         success: false,
         error: 'Invalid token'
       });
@@ -191,7 +191,7 @@ export const resetPassword = async (req: Request, res: Response) => {
     const hashedPassword = await passwordResetManager.usePasswordResetToken(token, password);
 
     if (!hashedPassword) {
-      return res.status(400).json({
+      return void res.status(400).json({
         success: false,
         error: 'Failed to reset password'
       });
@@ -229,7 +229,7 @@ export const resetPassword = async (req: Request, res: Response) => {
     logger.error('Password reset failed:', error);
     
     if (error instanceof Error && error.message.includes('Password requirements')) {
-      return res.status(400).json({
+      return void res.status(400).json({
         success: false,
         error: 'Password validation failed',
         message: error.message
@@ -252,7 +252,7 @@ export const getPasswordResetAttempts = async (req: Request, res: Response) => {
     const { email } = req.params;
 
     if (!email) {
-      return res.status(400).json({
+      return void res.status(400).json({
         success: false,
         error: 'Email is required'
       });
@@ -281,7 +281,7 @@ export const revokePasswordResetToken = async (req: Request, res: Response) => {
     const { token } = req.params;
 
     if (!token) {
-      return res.status(400).json({
+      return void res.status(400).json({
         success: false,
         error: 'Token is required'
       });
@@ -290,7 +290,7 @@ export const revokePasswordResetToken = async (req: Request, res: Response) => {
     const success = await passwordResetManager.revokePasswordResetToken(token);
 
     if (!success) {
-      return res.status(400).json({
+      return void res.status(400).json({
         success: false,
         error: 'Token not found or already revoked'
       });
@@ -337,7 +337,7 @@ export const getActiveTokensForUser = async (req: Request, res: Response) => {
     const { userId } = req.params;
 
     if (!userId) {
-      return res.status(400).json({
+      return void res.status(400).json({
         success: false,
         error: 'User ID is required'
       });
@@ -374,7 +374,7 @@ export const revokeAllTokensForUser = async (req: Request, res: Response) => {
     const { userId } = req.params;
 
     if (!userId) {
-      return res.status(400).json({
+      return void res.status(400).json({
         success: false,
         error: 'User ID is required'
       });

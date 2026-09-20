@@ -15,6 +15,7 @@ declare module 'express-session' {
     isAuthenticated?: boolean;
     lastActivity?: Date;
     trustScore?: number;
+    returnTo?: string;
   }
 }
 
@@ -41,7 +42,7 @@ class RedisSessionStore extends session.Store {
       const data = await this.getClient().get(key);
       
       if (!data) {
-        return callback(null, null);
+        return callback(null);
       }
 
       const session = JSON.parse(data);
@@ -165,7 +166,7 @@ export const fingerprintMiddleware: RequestHandler = async (req, res, next) => {
               }
             });
             
-            return res.status(401).json({
+            return void res.status(401).json({
               error: 'Session security validation failed',
               message: 'Please log in again',
               code: 'FINGERPRINT_VALIDATION_FAILED',
@@ -219,7 +220,7 @@ export const sessionActivityMiddleware: RequestHandler = async (req, res, next) 
             }
           });
           
-          return res.status(401).json({
+          return void res.status(401).json({
             error: 'Session expired',
             message: 'Please log in again',
             code: 'SESSION_EXPIRED',
@@ -305,7 +306,7 @@ export const redisSessionValidationMiddleware = async (
       res.clearCookie('sessionId');
       
       if (validation.requiresReauth) {
-        return res.status(401).json({
+        return void res.status(401).json({
           error: 'Authentication required',
           message: 'Session security validation failed. Please log in again.',
           code: 'SESSION_SECURITY_FAILED',
@@ -355,7 +356,7 @@ export const enhancedAuthMiddleware = async (
     // Fall back to JWT token validation if no Redis session
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({
+      return void res.status(401).json({
         error: 'Authentication required',
         message: 'No valid session or token provided',
         code: 'AUTHENTICATION_REQUIRED',
@@ -394,7 +395,7 @@ export const sessionSecurityMiddleware = async (
       await SessionService.destroySession(session.id);
       res.clearCookie('sessionId');
 
-      return res.status(401).json({
+      return void res.status(401).json({
         error: 'Security validation failed',
         message: 'Session trust level too low. Please log in again.',
         code: 'LOW_TRUST_SCORE',
