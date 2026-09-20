@@ -196,7 +196,7 @@ router.post(
       const { userIds, roleIds } = req.body;
       
       if (!Array.isArray(userIds) || !Array.isArray(roleIds)) {
-        return res.status(400).json({
+        return void res.status(400).json({
           success: false,
           error: 'Validation error',
           message: 'userIds and roleIds must be arrays'

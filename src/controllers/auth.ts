@@ -173,7 +173,7 @@ export async function login(req: Request, res: Response): Promise<void> {
     const redisSession = await SessionService.createSession({
       user_id: user.id,
       token: sessionToken,
-      expires_at: AuthUtils.calculateSessionExpiration(rememberMe),
+      expires_at: AuthUtils.calculateSessionExpiration(),
       ip_address: AuthUtils.getClientIp(req),
       user_agent: AuthUtils.getUserAgent(req) || undefined,
       fingerprint: fingerprint
@@ -192,7 +192,6 @@ export async function login(req: Request, res: Response): Promise<void> {
     const tokens = await createAuthenticationTokens(userPayload, {
       ipAddress: AuthUtils.getClientIp(req),
       userAgent: AuthUtils.getUserAgent(req) || undefined,
-      rememberMe
     });
 
     logger.info('User logged in successfully', { 

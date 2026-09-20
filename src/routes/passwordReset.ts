@@ -77,9 +77,7 @@ router.get(
   rateLimiters.general,
   requireAuth,
   requireAdmin,
-  validateParams({
-    email: validationSchemas.userLogin.extract('email').required()
-  }),
+  validateParams(validationSchemas.emailParam),
   getPasswordResetAttempts
 );
 

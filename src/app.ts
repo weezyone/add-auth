@@ -157,7 +157,7 @@ app.get('/profile', requireAuth, async (req, res) => {
     const userId = req.session?.userId;
     
     if (!userId) {
-      return res.status(401).json({ error: 'Authentication required' });
+      return void res.status(401).json({ error: 'Authentication required' });
     }
 
     // Example: Get user profile
@@ -179,7 +179,7 @@ app.get('/sessions', requireAuth, async (req, res) => {
     const userId = req.session?.userId;
     
     if (!userId) {
-      return res.status(401).json({ error: 'Authentication required' });
+      return void res.status(401).json({ error: 'Authentication required' });
     }
 
     // Example: Get user sessions
@@ -200,7 +200,7 @@ app.delete('/sessions/:sessionId', requireAuth, async (req, res) => {
     const { sessionId } = req.params;
     
     if (!userId) {
-      return res.status(401).json({ error: 'Authentication required' });
+      return void res.status(401).json({ error: 'Authentication required' });
     }
 
     // Example: Invalidate session
@@ -228,7 +228,7 @@ app.post('/logout', requireAuth, async (req, res) => {
     req.session.destroy((err) => {
       if (err) {
         logger.error('Error destroying session', { error: err });
-        return res.status(500).json({ error: 'Error logging out' });
+        return void res.status(500).json({ error: 'Error logging out' });
       }
 
       logger.info('User logged out successfully', { userId, sessionId });

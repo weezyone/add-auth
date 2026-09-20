@@ -125,6 +125,8 @@ export class RolesController {
         action: 'role_created',
         resource_type: 'role',
         resource_id: role.id,
+        ip_address: req.ip || 'unknown',
+        success: true,
         details: {
           roleName: name,
           permissions,
@@ -213,6 +215,8 @@ export class RolesController {
         action: 'role_updated',
         resource_type: 'role',
         resource_id: id,
+        ip_address: req.ip || 'unknown',
+        success: true,
         details: {
           oldRole: existingRole,
           newRole: updatedRole,
@@ -304,6 +308,8 @@ export class RolesController {
         action: 'role_deleted',
         resource_type: 'role',
         resource_id: id,
+        ip_address: req.ip || 'unknown',
+        success: true,
         details: {
           deletedRole: existingRole
         }
@@ -387,6 +393,8 @@ export class RolesController {
         action: 'role_assigned',
         resource_type: 'user_role',
         resource_id: targetUserId,
+        ip_address: req.ip || 'unknown',
+        success: true,
         details: {
           targetUserId,
           roleId,
@@ -481,6 +489,8 @@ export class RolesController {
         action: 'role_removed',
         resource_type: 'user_role',
         resource_id: targetUserId,
+        ip_address: req.ip || 'unknown',
+        success: true,
         details: {
           targetUserId,
           roleId,

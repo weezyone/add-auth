@@ -305,8 +305,8 @@ export class AuditLogModel {
       FROM audit_logs
     `;
 
-    const values = [];
-    const conditions = [];
+    const values: unknown[] = [];
+    const conditions: string[] = [];
 
     if (startDate) {
       conditions.push(`timestamp >= $${values.length + 1}`);
