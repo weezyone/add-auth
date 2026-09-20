@@ -1,0 +1,23 @@
+{
+  "name": "add-auth",
+  "user": "ubuntu",
+  "build": {
+    "dockerfile": "Dockerfile"
+  },
+  "install": "bash .cursor/install.sh",
+  "start": "bash .cursor/start.sh",
+  "terminals": [
+    {
+      "name": "API server",
+      "command": "npm run dev"
+    },
+    {
+      "name": "React demo",
+      "command": "cd example-apps/react-auth-demo && npm run dev -- --host"
+    }
+  ],
+  "ports": [
+    { "name": "API server", "port": 3000 },
+    { "name": "React demo", "port": 5173 }
+  ]
+}
