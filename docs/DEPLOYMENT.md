@@ -2,6 +2,8 @@
 
 This document provides comprehensive deployment instructions for the authentication system across different environments and platforms.
 
+**Before copying env names or npm scripts from the sections below**, confirm them against `src/config/index.ts`, `.env.example`, and `package.json`. Local truth: [DEVELOPMENT.md](./DEVELOPMENT.md). HTTP/CORS/CSRF: [API.md](./API.md). The default process is `src/index.ts` (`npm run dev` / `node dist/index.js` after `tsc`).
+
 ## Table of Contents
 
 - [Deployment Overview](#deployment-overview)

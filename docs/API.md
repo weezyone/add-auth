@@ -1,929 +1,362 @@
 # API Documentation
 
-This document provides detailed information about all API endpoints in the authentication system.
+HTTP surface of the **default server** (`src/index.ts`). Verified against `src/routes/auth.ts`, `src/routes/passwordReset.ts`, and the controllers they call.
+
+Base URL for local development:
+
+```
+http://localhost:3000
+```
+
+There is **no** `/api/v1` prefix. Auth lives under `/api/auth`. Password reset lives under `/api/password-reset`.
 
 ## Table of Contents
 
+- [Architecture](#architecture)
+- [CORS](#cors)
+- [CSRF](#csrf)
 - [Authentication](#authentication)
-- [Base URL](#base-url)
-- [Common Headers](#common-headers)
-- [Error Handling](#error-handling)
-- [Authentication Endpoints](#authentication-endpoints)
-- [User Management](#user-management)
-- [Admin Endpoints](#admin-endpoints)
-- [Rate Limiting](#rate-limiting)
-- [API Versioning](#api-versioning)
+- [Errors](#errors)
+- [Health and root](#health-and-root)
+- [Auth endpoints](#auth-endpoints)
+- [Password-reset endpoints](#password-reset-endpoints)
+- [Rate limits](#rate-limits)
+- [Not mounted on this server](#not-mounted-on-this-server)
+
+## Architecture
+
+```
+Browser / client
+    │  credentials: include
+    │  X-CSRF-Token on unsafe methods
+    ▼
+src/index.ts
+    helmet + CORS + applySecurityMiddleware(NODE_ENV)
+    cookie-parser + JSON body
+    GET /health, GET /
+    /api/auth              → src/routes/auth.ts
+    /api/password-reset    → src/routes/passwordReset.ts
+```
+
+`applySecurityMiddleware` (`src/middleware/index.ts`) always stacks: general rate limit, CSRF, XSS, SQL-injection checks, and input sanitization. Auth routes also apply `securityMiddleware.auth` (auth rate limit + another CSRF pass).
+
+Responses are **not** wrapped in a uniform `{ success, data, meta }` envelope. Auth controllers typically return `{ message, user, session, tokens }` or `{ error, message }`. Password-reset controllers use `{ success, message }` / `{ success, error }`.
+
+## CORS
+
+Configured in `src/index.ts`:
+
+- Allowlist: `FRONTEND_URL` split on commas (default `http://localhost:3000`). Requests with no `Origin` are allowed (curl, server-to-server).
+- `credentials: true`
+- Methods: `GET, POST, PUT, DELETE, OPTIONS`
+- Request header allowlist includes `X-CSRF-Token`
+- Exposed response header: `X-CSRF-Token`
+
+Example for the React and Next demos:
+
+```env
+FRONTEND_URL=http://localhost:5173,http://localhost:3001
+```
+
+## CSRF
+
+Implementation: `src/middleware/csrfProtection.ts`.
+
+| | |
+|---|---|
+| Token header | `X-CSRF-Token` (also `body._csrf`, `query._csrf`, or cookie `csrf-token`) |
+| Storage | Redis key `csrf:<sessionId>`, TTL 1 hour (2 hours in development config) |
+| Session id | `req.session.id` if Express session exists; otherwise `ip` + base64 user-agent prefix |
+| Safe methods | `GET`, `HEAD`, `OPTIONS` **generate** a token (sets `res.locals.csrfToken`, `X-CSRF-Token` header, `csrf-token` cookie) |
+| Unsafe methods | **validate** the token |
+
+Development (`securityConfigs.development`): validation is skipped when `Sec-Fetch-Site` is `same-origin`. Cross-origin demo apps (port 5173 → 3000) are not same-origin and must send the header.
+
+Testing preset marks `POST` exempt; the running API uses `development` or `production` from `NODE_ENV` (`test` is not in the `applySecurityMiddleware` union — unexpected values fall through to the development object only if you pass `'development'`). `src/index.ts` casts `NODE_ENV` and defaults to `'development'`.
+
+### Client flow (matches `example-apps/`)
+
+```bash
+# 1. Cookie jar + fetch token
+curl -c cookies.txt -b cookies.txt http://localhost:3000/api/auth/csrf-token
+# → { "success": true, "csrfToken": "..." }
+
+# 2. Mutating call with the same cookies
+curl -c cookies.txt -b cookies.txt \
+  -H "Content-Type: application/json" \
+  -H "X-CSRF-Token: <csrfToken>" \
+  -d '{"email":"user@example.com","password":"SecurePass1!","username":"johndoe","confirmPassword":"SecurePass1!"}' \
+  http://localhost:3000/api/auth/register
+```
+
+Redis must be reachable or token generate/validate returns 500 / 403.
 
 ## Authentication
 
-The API uses JWT (JSON Web Tokens) for authentication. Include the access token in the Authorization header:
+Protected routes use `authenticateToken` (`src/middleware/auth.ts`):
 
 ```
-Authorization: Bearer <access-token>
+Authorization: Bearer <accessToken>
 ```
 
-## Base URL
+Tokens are **HMAC JWTs** signed with `JWT_SECRET` (`src/utils/jwt.ts`), not RS256. Payload includes `id`, `email`, optional `roles`, and a generated `sessionId`.
 
-```
-http://localhost:3000/api/v1
-```
+Access-token lifetime is `JWT_EXPIRES_IN` (default **24h**). The JSON field `tokens.expiresIn` from `createAuthenticationTokens` is **hardcoded to 900** (seconds) and can disagree with the actual JWT `exp`.
 
-For production environments, replace with your actual domain.
+Refresh-token metadata is an **in-process `Map`** (`src/utils/refreshToken.ts`). Restarting the Node process invalidates stored refresh metadata even if the JWT itself has not expired.
 
-## Common Headers
+Register/login also create a Redis session (`SessionService`) and set an httpOnly `sessionId` cookie (`SameSite=strict`, `Secure` in production). Cookie max-age is 24h, or 7 days when `rememberMe` is true.
 
-### Required Headers
+## Errors
 
-```
-Content-Type: application/json
-Accept: application/json
-```
-
-### Optional Headers
-
-```
-X-Request-ID: <unique-request-id>
-X-Client-Version: <client-version>
-User-Agent: <user-agent-string>
-```
-
-## Error Handling
-
-All API responses follow a consistent format:
-
-### Success Response Format
+Typical auth error:
 
 ```json
 {
-  "success": true,
-  "message": "Operation completed successfully",
-  "data": {
-    // Response data
-  },
-  "meta": {
-    "timestamp": "2024-01-01T00:00:00.000Z",
-    "requestId": "req-123456",
-    "version": "v1"
-  }
+  "error": "Invalid credentials",
+  "message": "Email or password is incorrect"
 }
 ```
 
-### Error Response Format
+Typical password-reset error:
 
 ```json
 {
   "success": false,
-  "error": {
-    "code": "ERROR_CODE",
-    "message": "Human-readable error message",
-    "details": [
-      {
-        "field": "fieldName",
-        "message": "Field-specific error message",
-        "code": "FIELD_ERROR_CODE"
-      }
-    ]
+  "error": "Invalid or expired token"
+}
+```
+
+| Status | When |
+|--------|------|
+| 400 | Validation / weak password / bad reset token / current password wrong |
+| 401 | Missing/invalid/revoked JWT; bad login; disabled account |
+| 403 | CSRF missing or invalid |
+| 404 | User or session not found |
+| 409 | Email already registered |
+| 423 | Account locked (`locked_until`) |
+| 429 | Rate limit |
+| 500 | Unexpected failure (including mailer / Redis / schema mismatches) |
+
+Joi validation failures come from `validateBody` (localized messages when `localization` detects a language).
+
+## Health and root
+
+### `GET /health`
+
+Checks `db.testConnection()`, Redis `PING`, and `securityHealthCheck()` (Redis, CSRF generate, Joi, XSS, SQL-injection detect).
+
+```json
+{
+  "status": "healthy",
+  "timestamp": "2026-09-06T00:00:00.000Z",
+  "database": "connected",
+  "redis": "connected",
+  "security": {
+    "redis": true,
+    "csrf": true,
+    "validation": true,
+    "xss": true,
+    "sqlInjection": true
   },
-  "meta": {
-    "timestamp": "2024-01-01T00:00:00.000Z",
-    "requestId": "req-123456",
-    "version": "v1"
-  }
+  "version": "1.0.0"
 }
 ```
 
-### HTTP Status Codes
+### `GET /`
 
-- `200 OK`: Successful request
-- `201 Created`: Resource created successfully
-- `400 Bad Request`: Invalid request data
-- `401 Unauthorized`: Authentication required
-- `403 Forbidden`: Insufficient permissions
-- `404 Not Found`: Resource not found
-- `409 Conflict`: Resource already exists
-- `422 Unprocessable Entity`: Validation failed
-- `429 Too Many Requests`: Rate limit exceeded
-- `500 Internal Server Error`: Server error
-
-## Authentication Endpoints
-
-### Register User
-
-Creates a new user account.
-
-**Endpoint:** `POST /auth/register`
-
-**Request Body:**
 ```json
 {
-  "email": "user@example.com",
-  "password": "SecurePassword123!",
-  "firstName": "John",
-  "lastName": "Doe",
-  "acceptTerms": true
+  "message": "Add-Auth API",
+  "version": "1.0.0",
+  "timestamp": "2026-09-06T00:00:00.000Z"
 }
 ```
 
-**Validation Rules:**
-- `email`: Valid email format, unique, max 255 characters
-- `password`: Min 8 characters, must contain uppercase, lowercase, number, and special character
-- `firstName`: Required, max 50 characters
-- `lastName`: Required, max 50 characters
-- `acceptTerms`: Must be true
+## Auth endpoints
 
-**Response (201 Created):**
+Unless noted, POSTs need CSRF. `securityMiddleware.auth` applies to the whole `/api/auth` router.
+
+### `GET /api/auth/csrf-token`
+
+Returns `{ "success": true, "csrfToken": "<token>" }` after the GET CSRF generator runs.
+
+### `POST /api/auth/register`
+
+Rate limit: `rateLimiters.registration` (5 / hour / IP) plus the auth stack.
+
+**Body** (Joi `userRegistration`):
+
+| Field | Required | Rules |
+|-------|----------|--------|
+| `username` | yes | alphanumeric, 3–30 chars. **Validated only** — `UserModel.create` persists `email` + `password_hash`, not username. |
+| `email` | yes | email |
+| `password` | yes | 8–128 chars; at least one lower, upper, digit, and `!@#$%^&*` |
+| `confirmPassword` | yes | must match `password` |
+| `firstName` / `lastName` | no | letters/spaces, max 50 |
+
+Controller also runs `defaultPasswordSecurity.validatePassword` (specials include a wider set than Joi).
+
+**201**
+
 ```json
 {
-  "success": true,
   "message": "User registered successfully",
-  "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
+  "user": {
+    "id": "uuid",
     "email": "user@example.com",
-    "firstName": "John",
-    "lastName": "Doe",
-    "emailVerified": false,
-    "createdAt": "2024-01-01T00:00:00.000Z",
-    "updatedAt": "2024-01-01T00:00:00.000Z"
-  }
-}
-```
-
-**Error Responses:**
-```json
-// Email already exists
-{
-  "success": false,
-  "error": {
-    "code": "EMAIL_ALREADY_EXISTS",
-    "message": "An account with this email already exists",
-    "details": []
-  }
-}
-
-// Validation error
-{
-  "success": false,
-  "error": {
-    "code": "VALIDATION_ERROR",
-    "message": "Invalid input data",
-    "details": [
-      {
-        "field": "password",
-        "message": "Password must contain at least one uppercase letter",
-        "code": "PASSWORD_WEAK"
-      }
-    ]
-  }
-}
-```
-
-### Login
-
-Authenticates a user and returns JWT tokens.
-
-**Endpoint:** `POST /auth/login`
-
-**Request Body:**
-```json
-{
-  "email": "user@example.com",
-  "password": "SecurePassword123!",
-  "rememberMe": false
-}
-```
-
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "message": "Login successful",
-  "data": {
-    "accessToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "refreshToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "expiresIn": 900,
-    "tokenType": "Bearer",
-    "user": {
-      "id": "550e8400-e29b-41d4-a716-446655440000",
-      "email": "user@example.com",
-      "firstName": "John",
-      "lastName": "Doe",
-      "roles": ["user"],
-      "lastLogin": "2024-01-01T00:00:00.000Z"
-    }
-  }
-}
-```
-
-**Error Responses:**
-```json
-// Invalid credentials
-{
-  "success": false,
-  "error": {
-    "code": "INVALID_CREDENTIALS",
-    "message": "Invalid email or password",
-    "details": []
-  }
-}
-
-// Account locked
-{
-  "success": false,
-  "error": {
-    "code": "ACCOUNT_LOCKED",
-    "message": "Account is temporarily locked due to multiple failed login attempts",
-    "details": [
-      {
-        "field": "unlockAt",
-        "message": "Account will be unlocked at 2024-01-01T01:00:00.000Z"
-      }
-    ]
-  }
-}
-```
-
-### Refresh Token
-
-Refreshes the access token using a refresh token.
-
-**Endpoint:** `POST /auth/refresh`
-
-**Request Body:**
-```json
-{
-  "refreshToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9..."
-}
-```
-
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "message": "Token refreshed successfully",
-  "data": {
-    "accessToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "refreshToken": "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9...",
+    "created_at": "...",
+    "status": "active"
+  },
+  "session": {
+    "id": "redis-session-id",
+    "expires_at": "...",
+    "trust_score": 0
+  },
+  "tokens": {
+    "accessToken": "...",
+    "refreshToken": "...",
     "expiresIn": 900,
     "tokenType": "Bearer"
   }
 }
 ```
 
-### Logout
+**409** if email exists. **400** if password security module rejects the password.
 
-Logs out the user and blacklists the current token.
+### `POST /api/auth/login`
 
-**Endpoint:** `POST /auth/logout`
+Rate limit: `rateLimiters.login` (10 / 15 min / IP).
 
-**Headers:**
-```
-Authorization: Bearer <access-token>
-```
+**Body:** `{ "email", "password", "rememberMe": false }`
 
-**Request Body:**
-```json
-{
-  "logoutAll": false
-}
-```
+**200** includes `user` (`id`, `email`, `last_login`, `status`, `email_verified`), `session` (adds `concurrent_count`), and `tokens`. Roles are loaded into the JWT payload, not the `user` object.
 
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "message": "Logout successful",
-  "data": null
-}
-```
+**401** invalid password or missing user (`Invalid credentials`) or `status !== active` (`Account disabled`). **423** locked.
 
-### Get Current User
+Failed passwords call `UserModel.incrementFailedLoginAttempts`.
 
-Returns information about the currently authenticated user.
+### `POST /api/auth/logout`
 
-**Endpoint:** `GET /auth/me`
+Requires `Authorization: Bearer`. CSRF required.
 
-**Headers:**
-```
-Authorization: Bearer <access-token>
-```
+Optional body: `{ "refreshToken": "..." }` — passed to `performLogout` for blacklist.
 
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "message": "User information retrieved successfully",
-  "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "email": "user@example.com",
-    "firstName": "John",
-    "lastName": "Doe",
-    "emailVerified": true,
-    "roles": ["user"],
-    "permissions": ["read:profile", "update:profile"],
-    "lastLogin": "2024-01-01T00:00:00.000Z",
-    "createdAt": "2024-01-01T00:00:00.000Z",
-    "updatedAt": "2024-01-01T00:00:00.000Z"
-  }
-}
-```
+Also destroys Redis session from cookie `sessionId` or header `X-Session-Id`.
 
-### Password Reset Request
+**200** `{ "message": "Logged out successfully" }`  
+**400** if neither token nor session was present.
 
-Initiates a password reset process by sending a reset link to the user's email.
+### `POST /api/auth/refresh`
 
-**Endpoint:** `POST /auth/password/reset-request`
+Rate limit: 30 / 15 min / IP. Body: `{ "refreshToken": "..." }` (Joi `refreshToken` schema).
 
-**Request Body:**
-```json
-{
-  "email": "user@example.com"
-}
-```
+**200** `{ "message": "Tokens refreshed successfully", "tokens": { ... } }`  
+**401** expired/invalid refresh token.
 
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "message": "Password reset link sent to your email",
-  "data": {
-    "resetTokenSent": true,
-    "expiresAt": "2024-01-01T01:00:00.000Z"
-  }
-}
-```
+### `GET /api/auth/me`
 
-### Password Reset Confirm
+Bearer required. **200** `{ "user": { id, email, created_at, updated_at, status, email_verified, last_login } }`.
 
-Confirms the password reset using the token from the email.
+### `PUT /api/auth/profile`
 
-**Endpoint:** `POST /auth/password/reset-confirm`
+Bearer + CSRF. Body: Joi `userProfileUpdate` (optional `firstName`, `lastName`, `email`, …). `UserModel.update` accepts `email`, `status`, `email_verified` only (`UpdateUserInput`). Extra fields are ignored or fail at SQL depending on the model implementation.
 
-**Request Body:**
-```json
-{
-  "token": "reset-token-from-email",
-  "newPassword": "NewSecurePassword123!",
-  "confirmPassword": "NewSecurePassword123!"
-}
-```
+**409** if the new email is taken.
 
-**Response (200 OK):**
+### `POST /api/auth/change-password`
+
+Bearer + CSRF. Body: `{ "currentPassword", "newPassword", "confirmPassword" }`.
+
+On success, all Redis sessions for the user are destroyed and the `sessionId` cookie is cleared.
+
+**200** `{ "success": true, "message": "Password updated successfully. Please log in again." }`
+
+### Session routes (Redis session middleware)
+
+These handlers live on the same router. They require `redisSessionValidationMiddleware` + `enhancedAuthMiddleware` + `sessionSecurityMiddleware` (`src/middleware/session.ts`), not only a JWT.
+
+| Method | Path | CSRF | Success shape |
+|--------|------|------|----------------|
+| GET | `/api/auth/sessions` | no | `{ sessions, total }` |
+| DELETE | `/api/auth/sessions/:sessionId` | yes | `{ message }` |
+| DELETE | `/api/auth/sessions` | yes | `{ message, revokedCount }` |
+| PUT | `/api/auth/session/extend` | yes | `{ message, session }` |
+
+`src/index.ts` does **not** mount global `sessionMiddleware`. These routes still run their own Redis session checks; they fail closed if Redis/session state is missing.
+
+## Password-reset endpoints
+
+Router: `src/routes/passwordReset.ts`. XSS + SQL-injection middleware on all routes. CSRF on unsafe methods.
+
+Tokens: 64 random bytes, SHA-256 hashed, Redis `password-reset:<hashedToken>`, TTL **1 hour**. Per-email cap: **3** attempts / hour (`PasswordResetManager`). IP limiter: **3** / hour (`rateLimiters.passwordReset`).
+
+### `POST /api/password-reset/request`
+
+Body: `{ "email": "user@example.com" }`.
+
+Always aims to return the same message whether or not the user exists:
+
 ```json
 {
   "success": true,
-  "message": "Password reset successful",
-  "data": {
-    "passwordChanged": true,
-    "changedAt": "2024-01-01T00:00:00.000Z"
-  }
+  "message": "If an account with this email exists, you will receive a password reset link.",
+  "expiresAt": "..."
 }
 ```
 
-### Change Password
+`expiresAt` is included when a token was created.
 
-Changes the user's password (requires current password).
+**Operational constraint:** the handler queries `SELECT id, email, username FROM users WHERE email = $1 AND is_active = true`. Current migrations have `status` and no `username` / `is_active`. That query errors against a schema built only from `001`–`005`. Email send also requires `EMAIL_USER` + `EMAIL_PASS`.
 
-**Endpoint:** `POST /auth/password/change`
+### `GET /api/password-reset/verify/:token`
 
-**Headers:**
-```
-Authorization: Bearer <access-token>
-```
+**200** `{ success, message, data: { email, expiresAt } }` or **400** invalid/expired.
 
-**Request Body:**
-```json
-{
-  "currentPassword": "OldPassword123!",
-  "newPassword": "NewSecurePassword123!",
-  "confirmPassword": "NewSecurePassword123!"
-}
-```
+### `POST /api/password-reset/reset`
 
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "message": "Password changed successfully",
-  "data": {
-    "passwordChanged": true,
-    "changedAt": "2024-01-01T00:00:00.000Z"
-  }
-}
-```
+Body (Joi `passwordReset`): `{ "token", "password", "confirmPassword" }`. Controller reads `token` and `password`.
 
-### Email Verification
+**200** `{ "success": true, "message": "Password has been reset successfully" }`
 
-Verifies the user's email address using a verification token.
+On success the controller updates `password_hash`, `DELETE FROM sessions WHERE user_id = $1`, and writes an audit row. The audit insert uses columns `details`, `created_at` and omits `resource_type`; `004_create_audit_logs_table.sql` requires `resource_type` and uses `timestamp` instead of `created_at`. Treat password-reset + audit as a known schema drift until those paths are aligned.
 
-**Endpoint:** `POST /auth/email/verify`
+### Admin / authenticated extras
 
-**Request Body:**
-```json
-{
-  "token": "email-verification-token"
-}
-```
+All require `requireAuth` + `requireAdmin` except revoke-by-token (CSRF only):
 
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "message": "Email verified successfully",
-  "data": {
-    "emailVerified": true,
-    "verifiedAt": "2024-01-01T00:00:00.000Z"
-  }
-}
-```
+| Method | Path | Notes |
+|--------|------|--------|
+| GET | `/api/password-reset/attempts/:email` | Auth + admin |
+| DELETE | `/api/password-reset/revoke/:token` | CSRF |
+| GET | `/api/password-reset/admin/stats` | Auth + admin |
+| GET | `/api/password-reset/admin/user/:userId/tokens` | Auth + admin |
+| DELETE | `/api/password-reset/admin/user/:userId/tokens` | Auth + admin + CSRF |
 
-### Resend Email Verification
+`requireAuth` here is the **session/RBAC** helper from `src/middleware/rbac.ts` (`req.session.userId`), not `authenticateToken`. On the default `src/index.ts` server, Express sessions are not initialized, so these admin routes will not see a session user.
 
-Resends the email verification link.
+## Rate limits
 
-**Endpoint:** `POST /auth/email/resend-verification`
+From `src/middleware/rateLimiter.ts` (Redis store). Values are hardcoded on the limiters (not the Zod `RATE_LIMIT_*` config) unless noted.
 
-**Headers:**
-```
-Authorization: Bearer <access-token>
-```
+| Limiter | Window | Max / IP | Applied to |
+|---------|--------|----------|------------|
+| `general` | 15 min | 100 | Global security stack + several GET reset routes |
+| `auth` | 15 min | 10 | Entire `/api/auth` router |
+| `login` | 15 min | 10 | `POST /login` |
+| `registration` | 1 hour | 5 | `POST /register` |
+| `refresh` | 15 min | 30 | `POST /refresh` |
+| `passwordReset` | 1 hour | 3 | request + reset |
 
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "message": "Verification email sent",
-  "data": {
-    "emailSent": true,
-    "expiresAt": "2024-01-01T01:00:00.000Z"
-  }
-}
-```
+429 body: `{ "error", "message", "retryAfter" }`.
 
-## OAuth Social Login
+## Not mounted on this server
 
-### OAuth Login Initiate
+| Path / module | Where it lives | Mounted by |
+|---------------|----------------|------------|
+| `/api/roles/*` | `src/routes/roles.ts` via `src/routes/index.ts` | **not** `src/index.ts` |
+| `/auth/google`, `/auth/github` | `src/routes/oauth.ts` | `src/app.ts` only |
+| `/dashboard`, `/admin`, `/moderator` | demo handlers | `src/app.ts` only |
+| Standalone tutorial apps | `examples/jwt-auth`, etc. | their own `npm start` |
 
-Initiates OAuth login with a social provider.
-
-**Endpoint:** `GET /auth/oauth/{provider}/login`
-
-**Supported Providers:** `google`, `github`
-
-**Query Parameters:**
-- `redirect_uri`: Optional redirect URI after authentication
-- `state`: Optional state parameter for CSRF protection
-
-**Response (302 Redirect):**
-Redirects to the OAuth provider's authorization URL.
-
-### OAuth Callback
-
-Handles OAuth callback from social providers.
-
-**Endpoint:** `GET /auth/oauth/{provider}/callback`
-
-**Query Parameters:**
-- `code`: Authorization code from provider
-- `state`: State parameter for CSRF protection
-
-**Response (302 Redirect):**
-Redirects to the frontend with authentication tokens in URL parameters or sets cookies.
-
-## User Management
-
-### Update Profile
-
-Updates the user's profile information.
-
-**Endpoint:** `PATCH /users/profile`
-
-**Headers:**
-```
-Authorization: Bearer <access-token>
-```
-
-**Request Body:**
-```json
-{
-  "firstName": "John",
-  "lastName": "Doe",
-  "phoneNumber": "+1234567890",
-  "dateOfBirth": "1990-01-01",
-  "timezone": "UTC"
-}
-```
-
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "message": "Profile updated successfully",
-  "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "email": "user@example.com",
-    "firstName": "John",
-    "lastName": "Doe",
-    "phoneNumber": "+1234567890",
-    "dateOfBirth": "1990-01-01",
-    "timezone": "UTC",
-    "updatedAt": "2024-01-01T00:00:00.000Z"
-  }
-}
-```
-
-### Get User Sessions
-
-Lists all active sessions for the user.
-
-**Endpoint:** `GET /users/sessions`
-
-**Headers:**
-```
-Authorization: Bearer <access-token>
-```
-
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "message": "Sessions retrieved successfully",
-  "data": {
-    "sessions": [
-      {
-        "id": "session-id-1",
-        "ipAddress": "192.168.1.100",
-        "userAgent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-        "location": "New York, NY",
-        "current": true,
-        "createdAt": "2024-01-01T00:00:00.000Z",
-        "lastActivity": "2024-01-01T00:30:00.000Z"
-      }
-    ],
-    "totalCount": 1
-  }
-}
-```
-
-### Revoke Session
-
-Revokes a specific session.
-
-**Endpoint:** `DELETE /users/sessions/{sessionId}`
-
-**Headers:**
-```
-Authorization: Bearer <access-token>
-```
-
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "message": "Session revoked successfully",
-  "data": null
-}
-```
-
-## Admin Endpoints
-
-### List Users
-
-Lists all users with pagination (Admin only).
-
-**Endpoint:** `GET /admin/users`
-
-**Headers:**
-```
-Authorization: Bearer <access-token>
-```
-
-**Query Parameters:**
-- `page`: Page number (default: 1)
-- `limit`: Items per page (default: 20, max: 100)
-- `search`: Search term for email or name
-- `status`: Filter by status (active, inactive, locked)
-- `role`: Filter by role
-
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "message": "Users retrieved successfully",
-  "data": {
-    "users": [
-      {
-        "id": "550e8400-e29b-41d4-a716-446655440000",
-        "email": "user@example.com",
-        "firstName": "John",
-        "lastName": "Doe",
-        "status": "active",
-        "roles": ["user"],
-        "lastLogin": "2024-01-01T00:00:00.000Z",
-        "createdAt": "2024-01-01T00:00:00.000Z"
-      }
-    ],
-    "pagination": {
-      "page": 1,
-      "limit": 20,
-      "totalPages": 5,
-      "totalCount": 100,
-      "hasNext": true,
-      "hasPrevious": false
-    }
-  }
-}
-```
-
-### Get User Details
-
-Get detailed information about a specific user (Admin only).
-
-**Endpoint:** `GET /admin/users/{userId}`
-
-**Headers:**
-```
-Authorization: Bearer <access-token>
-```
-
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "message": "User details retrieved successfully",
-  "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "email": "user@example.com",
-    "firstName": "John",
-    "lastName": "Doe",
-    "status": "active",
-    "roles": ["user"],
-    "permissions": ["read:profile", "update:profile"],
-    "lastLogin": "2024-01-01T00:00:00.000Z",
-    "loginAttempts": 0,
-    "lockedUntil": null,
-    "emailVerified": true,
-    "createdAt": "2024-01-01T00:00:00.000Z",
-    "updatedAt": "2024-01-01T00:00:00.000Z"
-  }
-}
-```
-
-### Update User Status
-
-Updates a user's status (Admin only).
-
-**Endpoint:** `PATCH /admin/users/{userId}/status`
-
-**Headers:**
-```
-Authorization: Bearer <access-token>
-```
-
-**Request Body:**
-```json
-{
-  "status": "inactive",
-  "reason": "Account suspended for policy violation"
-}
-```
-
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "message": "User status updated successfully",
-  "data": {
-    "id": "550e8400-e29b-41d4-a716-446655440000",
-    "status": "inactive",
-    "updatedAt": "2024-01-01T00:00:00.000Z"
-  }
-}
-```
-
-### Assign Role
-
-Assigns a role to a user (Admin only).
-
-**Endpoint:** `POST /admin/users/{userId}/roles`
-
-**Headers:**
-```
-Authorization: Bearer <access-token>
-```
-
-**Request Body:**
-```json
-{
-  "roleId": "role-id-here",
-  "expiresAt": "2024-12-31T23:59:59.000Z"
-}
-```
-
-**Response (200 OK):**
-```json
-{
-  "success": true,
-  "message": "Role assigned successfully",
-  "data": {
-    "userId": "550e8400-e29b-41d4-a716-446655440000",
-    "roleId": "role-id-here",
-    "assignedAt": "2024-01-01T00:00:00.000Z",
-    "expiresAt": "2024-12-31T23:59:59.000Z"
-  }
-}
-```
-
-## Rate Limiting
-
-The API implements rate limiting to prevent abuse:
-
-### Rate Limit Headers
-
-All responses include rate limit information:
-
-```
-X-RateLimit-Limit: 100
-X-RateLimit-Remaining: 99
-X-RateLimit-Reset: 1609459200
-X-RateLimit-Window: 900
-```
-
-### Rate Limit Exceeded Response
-
-When rate limit is exceeded, the API returns:
-
-```json
-{
-  "success": false,
-  "error": {
-    "code": "RATE_LIMIT_EXCEEDED",
-    "message": "Too many requests. Please try again later.",
-    "details": [
-      {
-        "field": "retryAfter",
-        "message": "Retry after 300 seconds"
-      }
-    ]
-  }
-}
-```
-
-### Rate Limit Policies
-
-- **General API**: 100 requests per 15 minutes per IP
-- **Authentication**: 5 login attempts per 15 minutes per IP
-- **Password Reset**: 3 requests per hour per IP
-- **Email Verification**: 5 requests per hour per user
-
-## API Versioning
-
-The API uses URL versioning:
-
-- Current version: `v1`
-- Base URL: `/api/v1`
-- Future versions: `/api/v2`, `/api/v3`, etc.
-
-### Version Headers
-
-Optionally specify API version in headers:
-
-```
-Accept: application/vnd.api+json;version=1
-API-Version: v1
-```
-
-## Webhook Events
-
-The system can send webhook events for important authentication events:
-
-### Webhook Endpoint Configuration
-
-Configure webhook endpoints in your application settings:
-
-```json
-{
-  "webhookUrl": "https://your-app.com/webhooks/auth",
-  "secret": "webhook-secret-key",
-  "events": [
-    "user.registered",
-    "user.login",
-    "user.logout",
-    "user.password_changed",
-    "user.locked",
-    "user.unlocked"
-  ]
-}
-```
-
-### Webhook Payload Format
-
-```json
-{
-  "event": "user.registered",
-  "timestamp": "2024-01-01T00:00:00.000Z",
-  "data": {
-    "userId": "550e8400-e29b-41d4-a716-446655440000",
-    "email": "user@example.com",
-    "ipAddress": "192.168.1.100",
-    "userAgent": "Mozilla/5.0..."
-  },
-  "signature": "sha256=webhook-signature"
-}
-```
-
-## SDK and Code Examples
-
-### JavaScript/Node.js
-
-```javascript
-const AuthAPI = require('@your-org/auth-api');
-
-const client = new AuthAPI({
-  baseURL: 'https://api.yourapp.com/v1',
-  apiKey: 'your-api-key'
-});
-
-// Login
-const loginResult = await client.auth.login({
-  email: 'user@example.com',
-  password: 'password123'
-});
-
-// Get current user
-const user = await client.auth.getCurrentUser();
-
-// Refresh token
-const newTokens = await client.auth.refresh(refreshToken);
-```
-
-### Python
-
-```python
-from auth_api import AuthClient
-
-client = AuthClient(
-    base_url='https://api.yourapp.com/v1',
-    api_key='your-api-key'
-)
-
-# Login
-login_result = client.auth.login(
-    email='user@example.com',
-    password='password123'
-)
-
-# Get current user
-user = client.auth.get_current_user()
-
-# Refresh token
-new_tokens = client.auth.refresh(refresh_token)
-```
-
-### cURL Examples
-
-```bash
-# Login
-curl -X POST https://api.yourapp.com/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"user@example.com","password":"password123"}'
-
-# Get current user
-curl -X GET https://api.yourapp.com/v1/auth/me \
-  -H "Authorization: Bearer <access-token>"
-
-# Refresh token
-curl -X POST https://api.yourapp.com/v1/auth/refresh \
-  -H "Content-Type: application/json" \
-  -d '{"refreshToken":"<refresh-token>"}'
-```
-
-## Testing
-
-### Test Accounts
-
-For testing purposes, you can use these test accounts:
-
-```
-Email: test@example.com
-Password: TestPassword123!
-Role: user
-
-Email: admin@example.com
-Password: AdminPassword123!
-Role: admin
-```
-
-### Postman Collection
-
-Download the Postman collection: [Auth API Collection](./postman-collection.json)
-
-### API Testing Tools
-
-- **Postman**: Import the collection for interactive testing
-- **Insomnia**: REST client for API testing
-- **curl**: Command-line tool for API requests
-- **HTTPie**: User-friendly command-line HTTP client
-
----
-
-This API documentation is automatically generated and kept up to date. For questions or issues, please create an issue in the GitHub repository.
+Library exports (`src/lib.ts`) include middleware, models, JWT helpers, `PasswordResetManager`, and `SessionService` for embedding in another Express app. That is a different integration path than calling this demo server.

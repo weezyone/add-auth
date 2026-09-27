@@ -1,917 +1,228 @@
 # Development Setup Guide
 
-This guide provides detailed instructions for setting up the authentication system for local development.
+How to run the **main API** (`src/index.ts` via `npm run dev`) locally. This is the server the frontend demos in `example-apps/` talk to.
+
+For library consumers, see the root [README.md](../README.md). For HTTP details, see [API.md](./API.md).
 
 ## Table of Contents
 
+- [What you are running](#what-you-are-running)
 - [Prerequisites](#prerequisites)
-- [Initial Setup](#initial-setup)
-- [Database Setup](#database-setup)
-- [Redis Setup](#redis-setup)
-- [Environment Configuration](#environment-configuration)
-- [Security Keys Generation](#security-keys-generation)
-- [Development Tools](#development-tools)
-- [Code Quality](#code-quality)
-- [Testing](#testing)
-- [Debugging](#debugging)
+- [Initial setup](#initial-setup)
+- [Environment configuration](#environment-configuration)
+- [Database migrations](#database-migrations)
+- [Run the API](#run-the-api)
+- [Frontend example apps](#frontend-example-apps)
+- [Tests, lint, and build](#tests-lint-and-build)
 - [Troubleshooting](#troubleshooting)
+
+## What you are running
+
+Two Express apps exist in this repo. Only one is started by `npm run dev`.
+
+| Entry | Script | What it exposes |
+|-------|--------|-----------------|
+| `src/index.ts` | `npm run dev` / `npm start` | Helmet, CORS, security middleware, `GET /health`, `GET /`, `/api/auth/*`, `/api/password-reset/*` |
+| `src/app.ts` | **not** wired to npm scripts | OAuth (`/auth/google`, `/auth/github`), session-cookie RBAC demo routes |
+
+`src/routes/index.ts` and `src/routes/roles.ts` define a role-management API, but **those routers are not mounted** on `src/index.ts`. Do not expect `/api/roles` on the default server.
+
+There is no Prisma layer. Persistence is `pg` (`src/database/connection.ts`) plus SQL files in `src/database/migrations/`.
 
 ## Prerequisites
 
-Ensure you have the following installed on your development machine:
+- **Node.js** 18+
+- **PostgreSQL** 14+ (16 in Cursor Cloud)
+- **Redis** 6+ (7 in Cursor Cloud) — the process starts if Redis is down, but CSRF tokens, rate limits, sessions, and password-reset tokens degrade or fail
+- **npm** 9+
 
-### Required Software
+Start local services (Debian/Ubuntu package install):
 
-- **Node.js**: Version 18.x or higher
-- **npm**: Version 9.x or higher (comes with Node.js)
-- **PostgreSQL**: Version 14.x or higher
-- **Redis**: Version 6.x or higher
-- **Git**: Version 2.x or higher
-
-### Optional but Recommended
-
-- **Docker & Docker Compose**: For containerized development
-- **Visual Studio Code**: With recommended extensions
-- **Postman**: For API testing
-- **pgAdmin**: For database management
-
-### Installation Instructions
-
-#### Node.js and npm
-
-**macOS (using Homebrew):**
 ```bash
-brew install node
+sudo pg_ctlcluster 16 main start   # or: sudo systemctl start postgresql
+sudo redis-server --daemonize yes  # or: sudo systemctl start redis-server
 ```
 
-**Ubuntu/Debian:**
+Confirm Redis:
+
 ```bash
-curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-sudo apt-get install -y nodejs
+redis-cli ping   # PONG
 ```
 
-**Windows:**
-Download from [nodejs.org](https://nodejs.org/)
-
-#### PostgreSQL
-
-**macOS (using Homebrew):**
-```bash
-brew install postgresql
-brew services start postgresql
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt update
-sudo apt install postgresql postgresql-contrib
-sudo systemctl start postgresql
-sudo systemctl enable postgresql
-```
-
-**Windows:**
-Download from [postgresql.org](https://www.postgresql.org/download/)
-
-#### Redis
-
-**macOS (using Homebrew):**
-```bash
-brew install redis
-brew services start redis
-```
-
-**Ubuntu/Debian:**
-```bash
-sudo apt update
-sudo apt install redis-server
-sudo systemctl start redis-server
-sudo systemctl enable redis-server
-```
-
-**Windows:**
-Use Docker or WSL2 with Linux installation
-
-## Initial Setup
-
-### 1. Clone the Repository
+## Initial setup
 
 ```bash
 git clone <repository-url>
 cd add-auth
-```
-
-### 2. Install Dependencies
-
-```bash
-# Install project dependencies
 npm install
-
-# Install global development tools (optional)
-npm install -g nodemon ts-node typescript
-```
-
-### 3. Verify Installation
-
-```bash
-# Check Node.js version
-node --version  # Should be 18.x or higher
-
-# Check npm version
-npm --version   # Should be 9.x or higher
-
-# Check PostgreSQL
-psql --version  # Should be 14.x or higher
-
-# Check Redis
-redis-cli ping  # Should return PONG
-```
-
-## Database Setup
-
-### 1. Create Database User
-
-```bash
-# Connect to PostgreSQL as superuser
-sudo -u postgres psql
-
-# Create database user
-CREATE USER auth_user WITH PASSWORD 'your_secure_password';
-
-# Create database
-CREATE DATABASE auth_db OWNER auth_user;
-
-# Grant privileges
-GRANT ALL PRIVILEGES ON DATABASE auth_db TO auth_user;
-
-# Exit PostgreSQL
-\q
-```
-
-### 2. Database Configuration
-
-Create a `.env` file in the project root:
-
-```env
-# Database Configuration
-DATABASE_URL=postgresql://auth_user:your_secure_password@localhost:5432/auth_db
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=auth_db
-DB_USER=auth_user
-DB_PASSWORD=your_secure_password
-```
-
-### 3. Test Database Connection
-
-```bash
-# Test connection
-npm run db:test
-
-# Or manually with psql
-psql -h localhost -U auth_user -d auth_db
-```
-
-## Redis Setup
-
-### 1. Configure Redis
-
-Edit Redis configuration (usually at `/etc/redis/redis.conf`):
-
-```conf
-# Bind to localhost only for development
-bind 127.0.0.1
-
-# Set a password (optional for development)
-requirepass your_redis_password
-
-# Set maximum memory (optional)
-maxmemory 256mb
-maxmemory-policy allkeys-lru
-
-# Enable AOF persistence
-appendonly yes
-```
-
-### 2. Restart Redis
-
-```bash
-# macOS
-brew services restart redis
-
-# Ubuntu/Debian
-sudo systemctl restart redis-server
-```
-
-### 3. Test Redis Connection
-
-```bash
-# Test without password
-redis-cli ping
-
-# Test with password
-redis-cli -a your_redis_password ping
-```
-
-## Environment Configuration
-
-### 1. Create Environment File
-
-Copy the example environment file:
-
-```bash
 cp .env.example .env
+# Edit .env — JWT_SECRET and SESSION_SECRET must be at least 32 characters
 ```
 
-### 2. Configure Environment Variables
+Create the database (defaults from `src/config/index.ts` / `.env.example`):
 
-Edit `.env` file with your development settings:
+```bash
+sudo -u postgres psql -c "CREATE DATABASE add_auth;"
+```
+
+Or point `DATABASE_URL` / `DB_*` at an existing database.
+
+## Environment configuration
+
+Validated in `src/config/index.ts` (Zod). Required secrets:
+
+| Variable | Constraint | Default |
+|----------|------------|---------|
+| `JWT_SECRET` | min 32 chars | **required** |
+| `SESSION_SECRET` | min 32 chars | **required** |
+
+Common optional / defaulted values:
+
+| Variable | Default | Notes |
+|----------|---------|--------|
+| `PORT` | `3000` | API listen port |
+| `NODE_ENV` | `development` | `development` \| `production` \| `test` |
+| `DB_HOST` / `DB_PORT` / `DB_NAME` / `DB_USER` / `DB_PASSWORD` | `localhost` / `5432` / `add_auth` / `postgres` / `password` | Used when `DATABASE_URL` is unset |
+| `DATABASE_URL` | unset | If set, used as the `pg` connection string |
+| `DB_SSL` | `false` | **Do not set `DB_SSL=false`**. Zod `z.coerce.boolean()` treats the string `"false"` as `true`. Leave unset or empty. |
+| `JWT_EXPIRES_IN` | `24h` | Passed to `jsonwebtoken.sign` |
+| `JWT_REFRESH_EXPIRES_IN` | `7d` | Passed to `jsonwebtoken.sign` |
+| `BCRYPT_ROUNDS` | `12` | |
+| `SESSION_TIMEOUT` | `86400000` | milliseconds |
+| `REDIS_HOST` / `REDIS_PORT` / `REDIS_PASSWORD` / `REDIS_URL` | `localhost` / `6379` / unset | Rate limit + CSRF + password-reset tokens use ioredis |
+| `FRONTEND_URL` | `http://localhost:3000` | **Not in the Zod schema.** Read in `src/index.ts` as a comma-separated CORS allowlist. |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GITHUB_*` | unset | Used by `src/config/passport.ts` (OAuth app in `src/app.ts`) |
+| `OAUTH_CALLBACK_URL` | `http://localhost:3000/auth/callback` | Passport callback base |
+| `RATE_LIMIT_WINDOW_MS` / `RATE_LIMIT_MAX_REQUESTS` | `900000` / `100` | Config object; many limiters in `rateLimiter.ts` still use hardcoded windows |
+| `LOG_LEVEL` | `info` | `error` \| `warn` \| `info` \| `debug` |
+
+Email (password reset) is **not** in the Zod schema. `src/utils/emailService.ts` reads:
+
+- `EMAIL_HOST` (default `smtp.gmail.com`)
+- `EMAIL_PORT` (default `587`)
+- `EMAIL_SECURE` (`true` to enable TLS)
+- `EMAIL_USER` / `EMAIL_PASS` — if either is empty, the mailer stays unconfigured
+- `EMAIL_FROM` / `EMAIL_REPLY_TO`
+
+Generate secrets:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+## Database migrations
+
+SQL migrations live in `src/database/migrations/` (`000`–`005`: schema_migrations, users, sessions, roles, audit_logs, OAuth columns).
+
+`package.json` `"migrate"` is `ts-node src/database/migrate.ts` with **no subcommand**. The CLI requires one:
+
+```bash
+# Apply pending migrations (this is the command that actually migrates)
+npx ts-node src/database/migrate.ts migrate
+
+# Status / rollback
+npx ts-node src/database/migrate.ts status
+npx ts-node src/database/migrate.ts rollback
+# or: npm run migrate:rollback   → src/database/rollback.ts
+```
+
+`npm run migrate` by itself prints usage and exits `1`.
+
+## Run the API
+
+```bash
+npm run dev
+```
+
+`ts-node-dev --respawn --transpile-only src/index.ts` — type errors do not block the process.
+
+Expect:
+
+- `GET http://localhost:3000/` → `{ message, version, timestamp }`
+- `GET http://localhost:3000/health` → database + Redis + `securityHealthCheck()`
+
+The server still listens if Redis init fails (`startServer` in `src/index.ts`). CSRF generation, rate-limit stores, and password-reset tokens then fail at request time.
+
+## Frontend example apps
+
+Browser clients for **this** API (not the standalone apps under `examples/`):
+
+| App | Directory | Dev URL |
+|-----|-----------|---------|
+| React + Vite | `example-apps/react-auth-demo` | `http://localhost:5173` |
+| Next.js | `example-apps/nextjs-auth-demo` | `http://localhost:3001` |
+| Vanilla HTML/JS | `example-apps/vanilla-auth-demo` | static (e.g. port 5500) |
+
+Details: [example-apps/README.md](../example-apps/README.md).
+
+Set CORS before starting the API:
 
 ```env
-# Application Configuration
-NODE_ENV=development
-PORT=3000
-API_PREFIX=/api/v1
-FRONTEND_URL=http://localhost:3000
-
-# Database Configuration
-DATABASE_URL=postgresql://auth_user:your_secure_password@localhost:5432/auth_db
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=auth_db
-DB_USER=auth_user
-DB_PASSWORD=your_secure_password
-
-# Redis Configuration
-REDIS_URL=redis://localhost:6379
-REDIS_HOST=localhost
-REDIS_PORT=6379
-REDIS_PASSWORD=your_redis_password
-
-# JWT Configuration
-JWT_SECRET=your-super-secret-jwt-key-here-minimum-32-characters
-JWT_REFRESH_SECRET=your-refresh-token-secret-here-minimum-32-characters
-JWT_EXPIRES_IN=15m
-JWT_REFRESH_EXPIRES_IN=7d
-
-# RSA Keys for JWT Signing
-JWT_PRIVATE_KEY_PATH=./keys/private.key
-JWT_PUBLIC_KEY_PATH=./keys/public.key
-
-# Email Configuration (for development)
-EMAIL_SERVICE=smtp
-SMTP_HOST=smtp.gmail.com
-SMTP_PORT=587
-SMTP_USER=your-email@gmail.com
-SMTP_PASSWORD=your-app-password
-EMAIL_FROM=noreply@localhost
-
-# OAuth Configuration (optional for development)
-GOOGLE_CLIENT_ID=your-google-client-id
-GOOGLE_CLIENT_SECRET=your-google-client-secret
-GITHUB_CLIENT_ID=your-github-client-id
-GITHUB_CLIENT_SECRET=your-github-client-secret
-
-# Security Configuration
-BCRYPT_SALT_ROUNDS=12
-RATE_LIMIT_WINDOW=15
-RATE_LIMIT_MAX=100
-SESSION_SECRET=your-session-secret-key-minimum-32-characters
-CSRF_SECRET=your-csrf-secret-key-minimum-32-characters
-
-# Development Configuration
-DEBUG=auth:*
-LOG_LEVEL=debug
-ENABLE_CORS=true
-ENABLE_SWAGGER=true
+FRONTEND_URL=http://localhost:3000,http://localhost:5173,http://localhost:3001,http://localhost:5500
 ```
 
-### 3. Generate Secure Secrets
+Every mutating `/api/auth` and `/api/password-reset` call needs a CSRF token. Same-origin browser requests can skip validation in **development** (`skipOnSameSite` when `Sec-Fetch-Site: same-origin`). Cross-origin demo apps must send `X-CSRF-Token`. See [API.md](./API.md#csrf).
+
+## Tests, lint, and build
+
+Scripts that actually exist (`package.json`):
 
 ```bash
-# Generate random secrets
-node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
-
-# Or use openssl
-openssl rand -hex 32
-```
-
-## Security Keys Generation
-
-### 1. Create Keys Directory
-
-```bash
-mkdir -p keys
-chmod 700 keys
-```
-
-### 2. Generate RSA Key Pair
-
-```bash
-# Generate private key
-openssl genrsa -out keys/private.key 2048
-
-# Generate public key
-openssl rsa -in keys/private.key -pubout -out keys/public.key
-
-# Set proper permissions
-chmod 600 keys/private.key
-chmod 644 keys/public.key
-```
-
-### 3. Verify Keys
-
-```bash
-# Check private key
-openssl rsa -in keys/private.key -check
-
-# Check public key
-openssl rsa -in keys/public.key -pubin -text -noout
-```
-
-## Development Tools
-
-### 1. Install Recommended VS Code Extensions
-
-Create `.vscode/extensions.json`:
-
-```json
-{
-  "recommendations": [
-    "ms-vscode.vscode-typescript-next",
-    "bradlc.vscode-tailwindcss",
-    "esbenp.prettier-vscode",
-    "dbaeumer.vscode-eslint",
-    "ms-vscode.vscode-json",
-    "redhat.vscode-yaml",
-    "ms-vscode.vscode-jest",
-    "formulahendry.auto-rename-tag",
-    "christian-kohler.path-intellisense",
-    "ms-vscode.vscode-thunder-client"
-  ]
-}
-```
-
-### 2. Configure VS Code Settings
-
-Create `.vscode/settings.json`:
-
-```json
-{
-  "editor.formatOnSave": true,
-  "editor.codeActionsOnSave": {
-    "source.fixAll.eslint": true
-  },
-  "typescript.preferences.importModuleSpecifier": "relative",
-  "jest.autoRun": "off",
-  "files.exclude": {
-    "**/node_modules": true,
-    "**/dist": true,
-    "**/.git": true
-  }
-}
-```
-
-### 3. Configure Debug Configuration
-
-Create `.vscode/launch.json`:
-
-```json
-{
-  "version": "0.2.0",
-  "configurations": [
-    {
-      "name": "Debug Server",
-      "type": "node",
-      "request": "launch",
-      "program": "${workspaceFolder}/src/index.ts",
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"],
-      "runtimeArgs": ["-r", "ts-node/register"],
-      "env": {
-        "NODE_ENV": "development"
-      },
-      "envFile": "${workspaceFolder}/.env",
-      "console": "integratedTerminal",
-      "internalConsoleOptions": "neverOpen"
-    },
-    {
-      "name": "Debug Tests",
-      "type": "node",
-      "request": "launch",
-      "program": "${workspaceFolder}/node_modules/.bin/jest",
-      "args": ["--runInBand", "--no-cache", "--no-coverage"],
-      "console": "integratedTerminal",
-      "internalConsoleOptions": "neverOpen"
-    }
-  ]
-}
-```
-
-## Code Quality
-
-### 1. ESLint Configuration
-
-The project includes ESLint configuration in `.eslintrc.json`:
-
-```json
-{
-  "env": {
-    "node": true,
-    "es2021": true
-  },
-  "extends": [
-    "eslint:recommended",
-    "@typescript-eslint/recommended",
-    "plugin:security/recommended"
-  ],
-  "parser": "@typescript-eslint/parser",
-  "parserOptions": {
-    "ecmaVersion": 12,
-    "sourceType": "module"
-  },
-  "plugins": [
-    "@typescript-eslint",
-    "security"
-  ],
-  "rules": {
-    "no-console": "warn",
-    "no-unused-vars": "off",
-    "@typescript-eslint/no-unused-vars": "error",
-    "@typescript-eslint/explicit-function-return-type": "warn",
-    "@typescript-eslint/no-explicit-any": "warn",
-    "security/detect-non-literal-regexp": "error",
-    "security/detect-unsafe-regex": "error",
-    "security/detect-buffer-noassert": "error",
-    "security/detect-child-process": "error",
-    "security/detect-disable-mustache-escape": "error",
-    "security/detect-eval-with-expression": "error",
-    "security/detect-no-csrf-before-method-override": "error",
-    "security/detect-non-literal-fs-filename": "error",
-    "security/detect-non-literal-require": "error",
-    "security/detect-possible-timing-attacks": "error",
-    "security/detect-pseudoRandomBytes": "error"
-  }
-}
-```
-
-### 2. Prettier Configuration
-
-Create `.prettierrc`:
-
-```json
-{
-  "semi": true,
-  "trailingComma": "es5",
-  "singleQuote": true,
-  "printWidth": 100,
-  "tabWidth": 2,
-  "useTabs": false,
-  "bracketSpacing": true,
-  "arrowParens": "avoid"
-}
-```
-
-### 3. Pre-commit Hooks
-
-Install Husky for pre-commit hooks:
-
-```bash
-npm install --save-dev husky
-npx husky install
-```
-
-Create `.husky/pre-commit`:
-
-```bash
-#!/bin/sh
-. "$(dirname "$0")/_/husky.sh"
-
-npm run lint
-npm run test
-```
-
-## Testing
-
-### 1. Test Configuration
-
-Jest configuration in `jest.config.js`:
-
-```javascript
-module.exports = {
-  preset: 'ts-jest',
-  testEnvironment: 'node',
-  roots: ['<rootDir>/src', '<rootDir>/tests'],
-  testMatch: ['**/__tests__/**/*.ts', '**/?(*.)+(spec|test).ts'],
-  transform: {
-    '^.+\\.ts$': 'ts-jest',
-  },
-  collectCoverageFrom: [
-    'src/**/*.ts',
-    '!src/**/*.d.ts',
-    '!src/**/*.test.ts',
-    '!src/**/*.spec.ts',
-  ],
-  coverageDirectory: 'coverage',
-  coverageReporters: ['text', 'lcov', 'html'],
-  setupFilesAfterEnv: ['<rootDir>/tests/setup.ts'],
-  testTimeout: 10000,
-};
-```
-
-### 2. Test Database Setup
-
-Create `tests/setup.ts`:
-
-```typescript
-import { PrismaClient } from '@prisma/client';
-
-let prisma: PrismaClient;
-
-beforeAll(async () => {
-  prisma = new PrismaClient({
-    datasources: {
-      db: {
-        url: process.env.TEST_DATABASE_URL,
-      },
-    },
-  });
-
-  // Run migrations
-  await prisma.$executeRaw`DROP SCHEMA IF EXISTS public CASCADE`;
-  await prisma.$executeRaw`CREATE SCHEMA public`;
-  // Add migration commands here
-});
-
-afterAll(async () => {
-  await prisma.$disconnect();
-});
-
-beforeEach(async () => {
-  // Clean database before each test
-  await prisma.user.deleteMany();
-  await prisma.session.deleteMany();
-  await prisma.auditLog.deleteMany();
-});
-
-export { prisma };
-```
-
-### 3. Running Tests
-
-```bash
-# Run all tests
-npm test
-
-# Run tests in watch mode
-npm run test:watch
-
-# Run tests with coverage
-npm run test:coverage
-
-# Run specific test file
-npm test -- auth.test.ts
-
-# Run tests matching pattern
-npm test -- --testNamePattern="login"
-```
-
-## Debugging
-
-### 1. Enable Debug Logging
-
-```bash
-# Enable all debug logs
-DEBUG=auth:* npm run dev
-
-# Enable specific debug logs
-DEBUG=auth:database,auth:redis npm run dev
-```
-
-### 2. Debug with VS Code
-
-1. Set breakpoints in your code
-2. Press `F5` or go to Run > Start Debugging
-3. Select "Debug Server" configuration
-4. The debugger will attach and stop at breakpoints
-
-### 3. Debug Tests
-
-```bash
-# Debug specific test
-npm run test:debug -- --testNamePattern="login test"
-
-# Or use VS Code debug configuration "Debug Tests"
-```
-
-### 4. Database Debugging
-
-```bash
-# Enable query logging
-DEBUG=prisma:query npm run dev
-
-# Check database connections
-npm run db:status
-
-# View active connections
-psql -U auth_user -d auth_db -c "SELECT * FROM pg_stat_activity;"
-```
-
-## Development Workflow
-
-### 1. Daily Development
-
-```bash
-# Start development server with hot reload
-npm run dev
-
-# Run tests in watch mode (separate terminal)
-npm run test:watch
-
-# Run linter
-npm run lint
-
-# Fix linting issues
+npm test                 # Jest; ts-jest isolatedModules; forceExit
+npm run lint             # eslint src/**/*.ts
 npm run lint:fix
+npm run build            # tsc
+npm run build:clean      # rm -rf dist && tsc
+npm start                # node dist/index.js (needs a successful build)
 ```
 
-### 2. Database Migrations
+There is no `type-check`, `test:watch`, `test:coverage`, `db:test`, `seed`, `env:validate`, or `generate:keys` script.
 
-```bash
-# Create a new migration
-npm run migrate:create -- add-user-table
+### Known constraints (do not treat as environment bugs)
 
-# Run pending migrations
-npm run migrate
-
-# Rollback last migration
-npm run migrate:rollback
-
-# Reset database (development only)
-npm run migrate:reset
-```
-
-### 3. Git Workflow
-
-```bash
-# Create feature branch
-git checkout -b feature/new-feature
-
-# Make changes and commit
-git add .
-git commit -m "feat: add new authentication feature"
-
-# Push to remote
-git push origin feature/new-feature
-
-# Create pull request
-gh pr create --title "Add new authentication feature"
-```
+- **`npm run build`**: the tree has pre-existing TypeScript errors. Dev works because `--transpile-only`. Tests use `isolatedModules` for the same reason.
+- **ESLint**: `.eslintrc.json` must extend `plugin:@typescript-eslint/recommended` (not `@typescript-eslint/recommended`).
+- **Jest**: suites live under `src/**/__tests__/`. Some suites still fail for pre-existing test/code mismatches. The password-reset unit suite was aligned with `PasswordResetManager.usePasswordResetToken` (Redis `setex` on `password-reset:<hashedToken>`).
+- Jest `forceExit` is required because several modules start `setInterval` cleanups (sessions, password reset, CSRF).
 
 ## Troubleshooting
 
-### Common Issues
+### `DB_SSL` / unexpected SSL on Postgres
 
-#### Database Connection Issues
+`z.coerce.boolean()` is true for any non-empty string, including `"false"`. Leave `DB_SSL` unset.
 
-```bash
-# Check PostgreSQL status
-sudo systemctl status postgresql
+### Migrations appear to do nothing
 
-# Check if PostgreSQL is listening
-sudo netstat -tlnp | grep :5432
+Use `npx ts-node src/database/migrate.ts migrate`, not `npm run migrate`.
 
-# Test connection
-psql -h localhost -U auth_user -d auth_db -c "SELECT 1;"
-```
+### `403 CSRF token missing` on register/login
 
-#### Redis Connection Issues
+1. `GET /api/auth/csrf-token` with a cookie jar (`credentials: 'include'`).
+2. Replay the same cookies on the POST.
+3. Send `X-CSRF-Token` (or body/query `_csrf`).
+4. Redis must be up — tokens are stored as `csrf:<sessionId>` (Express session id if present, otherwise `ip` + truncated user-agent).
+5. In development, same-origin (`Sec-Fetch-Site: same-origin`) skips CSRF validation. Different ports are not same-origin.
 
-```bash
-# Check Redis status
-sudo systemctl status redis-server
+### CORS / credentialed browser calls fail
 
-# Test Redis connection
-redis-cli ping
+`FRONTEND_URL` is a comma-separated allowlist. Include the exact demo origin. Allowed request header: `X-CSRF-Token`.
 
-# Check Redis logs
-sudo journalctl -u redis-server -f
-```
+### Redis disconnected in `/health`
 
-#### Node.js Issues
+The API still starts. Rate limiting, CSRF, session service, and password-reset tokens use Redis. Start Redis and restart the process.
 
-```bash
-# Clear npm cache
-npm cache clean --force
+### Password reset request returns 500 after a valid user
 
-# Remove node_modules and reinstall
-rm -rf node_modules package-lock.json
-npm install
+`src/controllers/passwordResetController.ts` selects `username` and filters `is_active` on `users`. Current migrations (`001`, `005`) create `email` / `status` and do **not** add `username` or `is_active`. The mailer also no-ops without `EMAIL_USER` + `EMAIL_PASS`.
 
-# Check Node.js version
-node --version
-```
+### Account lock after failed logins
 
-#### TypeScript Issues
+`login` increments `failed_login_attempts` and can return **423** with `Account locked` when `locked_until` is in the future (`AuthUtils.isAccountLocked`). Inactive `status` returns **401** `Account disabled`.
 
-```bash
-# Clean TypeScript build
-npm run build:clean
+### `npx tsc --noEmit` / `npm run build` fails
 
-# Check TypeScript configuration
-npx tsc --noEmit
+Expected today. Use `npm run dev` for local work.
 
-# Rebuild project
-npm run build
-```
+### Port already in use
 
-### Performance Issues
-
-#### Database Performance
-
-```sql
--- Check slow queries
-SELECT query, mean_time, calls, total_time
-FROM pg_stat_statements
-ORDER BY mean_time DESC
-LIMIT 10;
-
--- Check database size
-SELECT pg_size_pretty(pg_database_size('auth_db'));
-```
-
-#### Redis Performance
-
-```bash
-# Check Redis memory usage
-redis-cli info memory
-
-# Monitor Redis commands
-redis-cli monitor
-```
-
-### Security Issues
-
-#### File Permissions
-
-```bash
-# Set proper permissions for keys
-chmod 600 keys/private.key
-chmod 644 keys/public.key
-chmod 700 keys/
-
-# Check file permissions
-ls -la keys/
-```
-
-#### Environment Variables
-
-```bash
-# Check for sensitive data in environment
-env | grep -i secret
-
-# Validate environment configuration
-npm run env:validate
-```
-
-## Docker Development (Optional)
-
-### 1. Docker Compose Setup
-
-Create `docker-compose.dev.yml`:
-
-```yaml
-version: '3.8'
-
-services:
-  app:
-    build:
-      context: .
-      dockerfile: Dockerfile.dev
-    ports:
-      - "3000:3000"
-    environment:
-      NODE_ENV: development
-    volumes:
-      - .:/app
-      - /app/node_modules
-    depends_on:
-      - postgres
-      - redis
-    command: npm run dev
-
-  postgres:
-    image: postgres:14
-    environment:
-      POSTGRES_DB: auth_db
-      POSTGRES_USER: auth_user
-      POSTGRES_PASSWORD: password
-    ports:
-      - "5432:5432"
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-
-  redis:
-    image: redis:6-alpine
-    ports:
-      - "6379:6379"
-    volumes:
-      - redis_data:/data
-
-volumes:
-  postgres_data:
-  redis_data:
-```
-
-### 2. Development Dockerfile
-
-Create `Dockerfile.dev`:
-
-```dockerfile
-FROM node:18-alpine
-
-WORKDIR /app
-
-COPY package*.json ./
-RUN npm ci
-
-COPY . .
-
-EXPOSE 3000
-
-CMD ["npm", "run", "dev"]
-```
-
-### 3. Running with Docker
-
-```bash
-# Start development environment
-docker-compose -f docker-compose.dev.yml up
-
-# Stop environment
-docker-compose -f docker-compose.dev.yml down
-
-# Rebuild containers
-docker-compose -f docker-compose.dev.yml up --build
-```
-
-## Useful Commands
-
-### Development Commands
-
-```bash
-# Start development server
-npm run dev
-
-# Build project
-npm run build
-
-# Start production server
-npm start
-
-# Run tests
-npm test
-
-# Run linter
-npm run lint
-
-# Fix linting issues
-npm run lint:fix
-
-# Check types
-npm run type-check
-```
-
-### Database Commands
-
-```bash
-# Run migrations
-npm run migrate
-
-# Rollback migration
-npm run migrate:rollback
-
-# Reset database
-npm run migrate:reset
-
-# Seed database
-npm run seed
-```
-
-### Utility Commands
-
-```bash
-# Generate JWT keypair
-npm run generate:keys
-
-# Validate environment
-npm run env:validate
-
-# Check security
-npm run security:check
-
-# Update dependencies
-npm run deps:update
-```
-
----
-
-This development guide provides everything needed to set up and work with the authentication system locally. For questions or issues, please refer to the main README.md or create an issue in the repository.
+`PORT` defaults to 3000. Change it in `.env`. Next.js demo uses 3001; Vite demo uses 5173.

@@ -1,9 +1,12 @@
 # Security Documentation
 
-This document outlines the comprehensive security measures implemented in the authentication system and provides best practices for secure deployment and usage.
+This document outlines security measures in the authentication system and production guidance.
+
+**Read the snapshot below first.** Sections after [Security Architecture](#security-architecture) mix implemented behavior with generic / target-state advice (for example RS256 key pairs). When they disagree, trust the snapshot and the cited source files.
 
 ## Table of Contents
 
+- [Verified implementation snapshot](#verified-implementation-snapshot)
 - [Security Architecture](#security-architecture)
 - [Authentication Security](#authentication-security)
 - [Password Security](#password-security)
@@ -17,6 +20,48 @@ This document outlines the comprehensive security measures implemented in the au
 - [Vulnerability Management](#vulnerability-management)
 - [Security Best Practices](#security-best-practices)
 - [Compliance](#compliance)
+
+## Verified implementation snapshot
+
+Checked against `src/utils/jwt.ts`, `src/middleware/csrfProtection.ts`, `src/middleware/index.ts`, `src/security/password-security.ts`, `src/security/passwordReset.ts`, and `src/index.ts`.
+
+### JWT
+
+- Algorithm is **HMAC** (`jsonwebtoken.sign` with `JWT_SECRET`), not RS256 / RSA files.
+- Default access expiry env is `JWT_EXPIRES_IN=24h`. Response `tokens.expiresIn` is hardcoded to `900` in `createAuthenticationTokens`.
+- Refresh token **JWT** uses `JWT_REFRESH_EXPIRES_IN` (default `7d`). Revocation metadata is an in-memory `Map` in `src/utils/refreshToken.ts` (lost on process restart).
+- Logout blacklisting: `src/utils/tokenBlacklist.ts` (`performLogout`).
+
+### CSRF
+
+- Applied globally via `applySecurityMiddleware` and again on `/api/auth` (`securityMiddleware.auth`).
+- Tokens stored in Redis (`csrf:<sessionId>`). Header `X-CSRF-Token`.
+- Development skips validation when `Sec-Fetch-Site: same-origin`. Production config sets `skipOnSameSite: false`.
+- Fetch token: `GET /api/auth/csrf-token` with a cookie jar. Details: [API.md](./API.md#csrf).
+
+### Passwords
+
+- bcrypt via `AuthUtils.hashPassword` / `BCRYPT_ROUNDS` (default 12).
+- Joi on register: min 8, upper, lower, digit, one of `!@#$%^&*`.
+- `PasswordSecurityManager` uses a wider special-character set and runs again in register / change-password.
+- Password-reset tokens: 64-byte hex, SHA-256 at rest, Redis TTL 1 hour, 3 attempts / email / hour.
+
+### Transport and headers
+
+- `helmet` CSP + `cors` + `trust proxy` in `src/index.ts`.
+- CORS origins from `FRONTEND_URL` (comma-separated). Credentialed browsers must be listed.
+
+### Rate limits
+
+Hardcoded in `src/middleware/rateLimiter.ts` (Redis). Auth router: 10 / 15 min. Register: 5 / hour. Password reset: 3 / hour. See [API.md](./API.md#rate-limits).
+
+### Operational gaps (do not assume they are “secure by docs”)
+
+- Password-reset SQL expects `users.username` and `users.is_active`; migrations use `status` and have no `username`.
+- Password-reset audit inserts do not match `004_create_audit_logs_table.sql` (`resource_type` required; `timestamp` vs `created_at`).
+- OAuth routes are only mounted from `src/app.ts`, which `npm run dev` does not start.
+
+HTTP details: [API.md](./API.md). Local pitfalls: [DEVELOPMENT.md](./DEVELOPMENT.md#troubleshooting).
 
 ## Security Architecture
 

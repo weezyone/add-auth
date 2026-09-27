@@ -1,6 +1,8 @@
 # Authentication Examples
 
-This folder contains comprehensive examples demonstrating different authentication methods supported by this authentication system. Each example is a standalone, runnable application with detailed documentation.
+Standalone tutorial servers (their own ports and `package.json` files). They do **not** talk to the root `npm run dev` API.
+
+For React / Next / vanilla clients of the main API, use [`example-apps/`](../example-apps/).
 
 ## Available Examples
 

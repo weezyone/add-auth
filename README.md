@@ -84,49 +84,43 @@ app.listen(3000, () => {
 
 ### Environment Configuration
 
-Create a `.env` file with the following variables:
+Copy [`.env.example`](./.env.example) and set secrets. Names below match `src/config/index.ts` and `src/index.ts` (not `DATABASE_HOST` / `JWT_ACCESS_EXPIRY`).
 
 ```env
-# Database
-DATABASE_URL=postgresql://user:password@localhost:5432/dbname
-DATABASE_HOST=localhost
-DATABASE_PORT=5432
-DATABASE_NAME=your_db
-DATABASE_USER=your_user
-DATABASE_PASSWORD=your_password
+# Database (or set DATABASE_URL)
+DB_HOST=localhost
+DB_PORT=5432
+DB_NAME=add_auth
+DB_USER=postgres
+DB_PASSWORD=password
+# Leave DB_SSL unset. The string "false" is coerced to true.
 
-# JWT
-JWT_SECRET=your-super-secret-jwt-key
-JWT_ACCESS_EXPIRY=15m
-JWT_REFRESH_EXPIRY=7d
+# JWT / session (both secrets must be at least 32 characters)
+JWT_SECRET=your-super-secret-jwt-key-at-least-32-characters
+JWT_EXPIRES_IN=24h
+JWT_REFRESH_EXPIRES_IN=7d
+SESSION_SECRET=your-session-secret-at-least-32-characters
+SESSION_TIMEOUT=86400000
 
-# Session
-SESSION_SECRET=your-session-secret
-SESSION_EXPIRY=86400000
-
-# Redis (optional)
-REDIS_URL=redis://localhost:6379
+# Redis (CSRF, rate limits, sessions, password-reset tokens)
 REDIS_HOST=localhost
 REDIS_PORT=6379
 
-# Email (for password reset)
-SMTP_HOST=smtp.example.com
-SMTP_PORT=587
-SMTP_USER=your-email@example.com
-SMTP_PASSWORD=your-email-password
+# Password-reset mailer (src/utils/emailService.ts)
+EMAIL_HOST=smtp.example.com
+EMAIL_PORT=587
+EMAIL_USER=your-email@example.com
+EMAIL_PASS=your-email-password
 EMAIL_FROM=noreply@example.com
 
-# OAuth (optional)
-GOOGLE_CLIENT_ID=your-google-client-id
-GOOGLE_CLIENT_SECRET=your-google-client-secret
-GITHUB_CLIENT_ID=your-github-client-id
-GITHUB_CLIENT_SECRET=your-github-client-secret
+# CORS allowlist for browser clients (comma-separated)
+FRONTEND_URL=http://localhost:3000,http://localhost:5173
 
-# Application
-NODE_ENV=production
+NODE_ENV=development
 PORT=3000
-FRONTEND_URL=http://localhost:3000
 ```
+
+Full variable list and pitfalls: [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md#environment-configuration).
 
 ## Usage Examples
 
@@ -322,6 +316,13 @@ await AuditLogModel.create({
 const logs = await AuditLogModel.findByUser(userId, { limit: 50 });
 ```
 
+## Documentation
+
+- [docs/DEVELOPMENT.md](./docs/DEVELOPMENT.md) — local setup, env, migrations, pitfalls
+- [docs/API.md](./docs/API.md) — HTTP contract for `src/index.ts`
+- [docs/SECURITY.md](./docs/SECURITY.md) — verified security snapshot
+- [example-apps/](./example-apps/) — browser demos
+
 ## API Reference
 
 ### Middleware
@@ -367,16 +368,13 @@ const logs = await AuditLogModel.findByUser(userId, { limit: 50 });
 
 ## Database Setup
 
-The library uses PostgreSQL. Run migrations to set up the database schema:
+The library uses PostgreSQL via `pg` (no Prisma). SQL files are in `src/database/migrations/`. From this repo:
 
-```typescript
-import { db } from '@paulweezydesign/add-auth';
-
-// Run migrations
-// See src/database/migrate.ts for migration details
-
-// Or manually create tables using the provided SQL schema
+```bash
+npx ts-node src/database/migrate.ts migrate
 ```
+
+`npm run migrate` does not pass the `migrate` subcommand and will only print usage.
 
 ## Configuration Options
 
@@ -497,22 +495,24 @@ npm install
 
 # Set up environment
 cp .env.example .env
-# Edit .env with your configuration
+# Edit .env — JWT_SECRET and SESSION_SECRET must be ≥ 32 characters
 
-# Run database migrations
-npm run migrate
+# Run database migrations (npm run migrate does not pass a subcommand)
+npx ts-node src/database/migrate.ts migrate
 
-# Start development server
+# Start development server (src/index.ts, port 3000)
 npm run dev
 ```
 
+Mutating `/api/auth/*` and `/api/password-reset/*` calls need a CSRF token (`GET /api/auth/csrf-token` + `X-CSRF-Token`). See [docs/API.md](./docs/API.md).
+
 ## 📚 Examples & Learning
 
-**New to this authentication system?** Check out our comprehensive examples!
+**Browser clients for this API** (register/login/dashboard against port 3000): [example-apps/](./example-apps/).
 
-We provide **5 complete, runnable example applications** demonstrating different authentication methods:
+**Standalone tutorial backends** (their own servers and ports):
 
-### [View All Examples →](./examples/)
+### [View tutorial examples →](./examples/)
 
 | Example | Description | Port | Complexity |
 |---------|-------------|------|------------|
