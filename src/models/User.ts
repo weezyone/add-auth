@@ -11,22 +11,7 @@ import {
 } from '../types/user';
 import { db } from '../database/connection';
 import { logger } from '../utils/logger';
-
-/**
- * node-postgres already parses JSON/JSONB columns. JSON.parse() on the parsed
- * value (an array/object) threw, which broke every OAuth sign-up and login.
- */
-function parseJsonColumn<T>(value: unknown, fallback: T): T {
-  if (value === null || value === undefined) return fallback;
-  if (typeof value === 'string') {
-    try {
-      return JSON.parse(value) as T;
-    } catch {
-      return fallback;
-    }
-  }
-  return value as T;
-}
+import { parseJsonColumn } from '../utils/pgJson';
 
 /**
  * Run fn inside a transaction on a single connection. Issuing BEGIN/COMMIT

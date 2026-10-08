@@ -8,6 +8,7 @@ import {
 } from '../types/audit';
 import { db } from '../database/connection';
 import { logger } from '../utils/logger';
+import { parseJsonColumn } from '../utils/pgJson';
 
 export class AuditLogModel {
   static async create(
@@ -43,7 +44,7 @@ export class AuditLogModel {
         : await db.query(query, values);
 
       const auditLog = result.rows[0];
-      auditLog.details = JSON.parse(auditLog.details);
+      auditLog.details = parseJsonColumn<Record<string, unknown>>(auditLog.details, {});
 
       // Don't log the audit log creation itself to prevent infinite loops
       return auditLog;
@@ -71,7 +72,7 @@ export class AuditLogModel {
 
       const auditLog = result.rows[0];
       if (auditLog) {
-        auditLog.details = JSON.parse(auditLog.details);
+        auditLog.details = parseJsonColumn<Record<string, unknown>>(auditLog.details, {});
       }
 
       return auditLog || null;
@@ -103,7 +104,7 @@ export class AuditLogModel {
 
       return result.rows.map(auditLog => ({
         ...auditLog,
-        details: JSON.parse(auditLog.details),
+        details: parseJsonColumn<Record<string, unknown>>(auditLog.details, {}),
       }));
     } catch (error) {
       logger.error('Error finding audit logs by user ID', { userId, error });
@@ -133,7 +134,7 @@ export class AuditLogModel {
 
       return result.rows.map(auditLog => ({
         ...auditLog,
-        details: JSON.parse(auditLog.details),
+        details: parseJsonColumn<Record<string, unknown>>(auditLog.details, {}),
       }));
     } catch (error) {
       logger.error('Error finding audit logs by action', { action, error });
@@ -163,7 +164,7 @@ export class AuditLogModel {
 
       return result.rows.map(auditLog => ({
         ...auditLog,
-        details: JSON.parse(auditLog.details),
+        details: parseJsonColumn<Record<string, unknown>>(auditLog.details, {}),
       }));
     } catch (error) {
       logger.error('Error finding audit logs by resource type', { resourceType, error });
@@ -193,7 +194,7 @@ export class AuditLogModel {
 
       return result.rows.map(auditLog => ({
         ...auditLog,
-        details: JSON.parse(auditLog.details),
+        details: parseJsonColumn<Record<string, unknown>>(auditLog.details, {}),
       }));
     } catch (error) {
       logger.error('Error finding audit logs by resource ID', { resourceId, error });
@@ -224,7 +225,7 @@ export class AuditLogModel {
 
       return result.rows.map(auditLog => ({
         ...auditLog,
-        details: JSON.parse(auditLog.details),
+        details: parseJsonColumn<Record<string, unknown>>(auditLog.details, {}),
       }));
     } catch (error) {
       logger.error('Error finding audit logs by date range', { 
@@ -258,7 +259,7 @@ export class AuditLogModel {
 
       return result.rows.map(auditLog => ({
         ...auditLog,
-        details: JSON.parse(auditLog.details),
+        details: parseJsonColumn<Record<string, unknown>>(auditLog.details, {}),
       }));
     } catch (error) {
       logger.error('Error finding audit logs by IP address', { ipAddress, error });
@@ -287,7 +288,7 @@ export class AuditLogModel {
 
       return result.rows.map(auditLog => ({
         ...auditLog,
-        details: JSON.parse(auditLog.details),
+        details: parseJsonColumn<Record<string, unknown>>(auditLog.details, {}),
       }));
     } catch (error) {
       logger.error('Error finding failed audit logs', { error });

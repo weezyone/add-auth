@@ -9,6 +9,7 @@ import {
 } from '../types/role';
 import { db } from '../database/connection';
 import { logger } from '../utils/logger';
+import { parseJsonColumn } from '../utils/pgJson';
 
 export class RoleModel {
   static async create(
@@ -39,7 +40,7 @@ export class RoleModel {
         : await db.query(query, values);
 
       const role = result.rows[0];
-      role.permissions = JSON.parse(role.permissions);
+      role.permissions = parseJsonColumn<string[]>(role.permissions, []);
 
       logger.info('Role created successfully', { roleId: id, name: input.name });
       return role;
@@ -63,7 +64,7 @@ export class RoleModel {
 
       const role = result.rows[0];
       if (role) {
-        role.permissions = JSON.parse(role.permissions);
+        role.permissions = parseJsonColumn<string[]>(role.permissions, []);
       }
 
       return role || null;
@@ -87,7 +88,7 @@ export class RoleModel {
 
       const role = result.rows[0];
       if (role) {
-        role.permissions = JSON.parse(role.permissions);
+        role.permissions = parseJsonColumn<string[]>(role.permissions, []);
       }
 
       return role || null;
@@ -107,7 +108,7 @@ export class RoleModel {
 
       return result.rows.map(role => ({
         ...role,
-        permissions: JSON.parse(role.permissions),
+        permissions: parseJsonColumn<string[]>(role.permissions, []),
       }));
     } catch (error) {
       logger.error('Error finding all roles', { error });
@@ -162,7 +163,7 @@ export class RoleModel {
 
       const role = result.rows[0];
       if (role) {
-        role.permissions = JSON.parse(role.permissions);
+        role.permissions = parseJsonColumn<string[]>(role.permissions, []);
         logger.info('Role updated successfully', { roleId: id });
       }
 
@@ -279,7 +280,7 @@ export class RoleModel {
 
       return result.rows.map(role => ({
         ...role,
-        permissions: JSON.parse(role.permissions),
+        permissions: parseJsonColumn<string[]>(role.permissions, []),
       }));
     } catch (error) {
       logger.error('Error getting user roles', { userId, error });

@@ -5,6 +5,7 @@
  */
 import jwt from 'jsonwebtoken';
 import type { Express } from 'express';
+import { db } from '../../src/database/connection';
 import {
   setupInfrastructure, resetState, teardownInfrastructure, loadApp,
   Client, uniqueEmail, STRONG_PASSWORD,
@@ -73,6 +74,21 @@ describe('core auth flow', () => {
 
     const meAfter = await client.get('/api/auth/me').set('Authorization', `Bearer ${newAccess}`);
     expect(meAfter.status).toBe(401);
+  });
+
+  it('a user who has roles can log in, and the roles are in the access token', async () => {
+    const client = new Client(app);
+    const email = uniqueEmail();
+    const reg = await client.register(email);
+    await db.query(
+      `INSERT INTO user_roles (user_id, role_id, assigned_by)
+       SELECT $1, id, $1 FROM roles WHERE name IN ('user', 'moderator')`,
+      [reg.body.user.id],
+    );
+    const login = await client.login(email);
+    expect(login.status).toBe(200);
+    const decoded = jwt.decode(login.body.tokens.accessToken) as any;
+    expect(decoded.roles.sort()).toEqual(['moderator', 'user']);
   });
 
   it('rejects duplicate registration with 409', async () => {
