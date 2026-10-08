@@ -225,33 +225,25 @@ export class FingerprintService {
       return 0.5; // Neutral score for new devices
     }
 
-    let trustScore = 1.0;
+    // Score how familiar *this* device is. The previous formula subtracted a
+    // penalty for every history entry from a different device and then
+    // multiplied by the match ratio, so any user with a second device scored 0
+    // there (and still < 0.3 after logging in again), and
+    // sessionSecurityMiddleware destroyed the session on first use.
+    // A never-seen device now gets the same neutral 0.5 as a brand-new user;
+    // a known device scales from 0.5 up to 1.0 with how consistently it has
+    // been seen. Session hijacking (UA + network change on an existing
+    // session) is still caught by detectSessionHijacking/validateFingerprint.
     let consistentSessions = 0;
 
     for (const historical of fingerprintHistory) {
-      const validation = this.validateFingerprint(currentFingerprint, historical);
-      
-      if (validation.isValid) {
+      if (this.validateFingerprint(currentFingerprint, historical).isValid) {
         consistentSessions++;
-      } else {
-        // Reduce trust based on risk level
-        switch (validation.risk) {
-          case 'low':
-            trustScore -= 0.1;
-            break;
-          case 'medium':
-            trustScore -= 0.3;
-            break;
-          case 'high':
-            trustScore -= 0.5;
-            break;
-        }
       }
     }
 
-    // Boost trust for consistent fingerprints
     const consistencyRatio = consistentSessions / fingerprintHistory.length;
-    trustScore = Math.max(0, Math.min(1, trustScore * consistencyRatio));
+    const trustScore = Math.max(0, Math.min(1, 0.5 + 0.5 * consistencyRatio));
 
     logger.debug('Calculated device trust score', {
       fingerprintHash: currentFingerprint.hash,
