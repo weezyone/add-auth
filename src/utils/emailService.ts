@@ -45,6 +45,65 @@ export interface EmailOptions {
 }
 
 /**
+ * Verification email template. Exported so the mail-transport layer can use it
+ * without constructing an SMTP-backed EmailService.
+ */
+export function buildVerificationEmail(verificationUrl: string, expiresInHours: number): EmailTemplate {
+  const subject = 'Email Verification Required';
+  
+  const html = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <meta charset="utf-8">
+      <title>${subject}</title>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #007bff; color: white; padding: 20px; text-align: center; }
+        .content { padding: 20px; background-color: #f8f9fa; }
+        .button { display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; margin: 20px 0; }
+        .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>Email Verification</h1>
+        </div>
+        <div class="content">
+          <h2>Verify Your Email Address</h2>
+          <p>Please click the button below to verify your email address:</p>
+          <a href="${verificationUrl}" class="button">Verify Email</a>
+          <p>If the button doesn't work, copy and paste this link into your browser:</p>
+          <p><a href="${verificationUrl}">${verificationUrl}</a></p>
+          <p>This link will expire in ${expiresInHours} hours.</p>
+        </div>
+        <div class="footer">
+          <p>This is an automated message. Please do not reply to this email.</p>
+          <p>&copy; 2024 Add-Auth. All rights reserved.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+
+  const text = `
+Email Verification
+
+Please use the following link to verify your email address:
+
+${verificationUrl}
+
+This link will expire in ${expiresInHours} hours.
+
+This is an automated message. Please do not reply to this email.
+  `;
+
+  return { subject, html, text };
+}
+
+/**
  * Email Service Class
  */
 export class EmailService {
@@ -413,58 +472,7 @@ This is an automated message. Please do not reply to this email.
    * Get verification email template
    */
   private getVerificationTemplate(verificationUrl: string): EmailTemplate {
-    const subject = 'Email Verification Required';
-    
-    const html = `
-      <!DOCTYPE html>
-      <html>
-      <head>
-        <meta charset="utf-8">
-        <title>${subject}</title>
-        <style>
-          body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-          .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-          .header { background-color: #007bff; color: white; padding: 20px; text-align: center; }
-          .content { padding: 20px; background-color: #f8f9fa; }
-          .button { display: inline-block; padding: 12px 24px; background-color: #007bff; color: white; text-decoration: none; border-radius: 4px; margin: 20px 0; }
-          .footer { padding: 20px; text-align: center; font-size: 12px; color: #666; }
-        </style>
-      </head>
-      <body>
-        <div class="container">
-          <div class="header">
-            <h1>Email Verification</h1>
-          </div>
-          <div class="content">
-            <h2>Verify Your Email Address</h2>
-            <p>Please click the button below to verify your email address:</p>
-            <a href="${verificationUrl}" class="button">Verify Email</a>
-            <p>If the button doesn't work, copy and paste this link into your browser:</p>
-            <p><a href="${verificationUrl}">${verificationUrl}</a></p>
-            <p>This link will expire in 24 hours.</p>
-          </div>
-          <div class="footer">
-            <p>This is an automated message. Please do not reply to this email.</p>
-            <p>&copy; 2024 Add-Auth. All rights reserved.</p>
-          </div>
-        </div>
-      </body>
-      </html>
-    `;
-
-    const text = `
-Email Verification
-
-Please use the following link to verify your email address:
-
-${verificationUrl}
-
-This link will expire in 24 hours.
-
-This is an automated message. Please do not reply to this email.
-    `;
-
-    return { subject, html, text };
+    return buildVerificationEmail(verificationUrl, 24);
   }
 
   /**
