@@ -12,6 +12,35 @@ import {
 import { db } from '../database/connection';
 import { logger } from '../utils/logger';
 
+/**
+ * node-postgres already parses JSON/JSONB columns. JSON.parse() on the parsed
+ * value (an array/object) threw, which broke every OAuth sign-up and login.
+ */
+function parseJsonColumn<T>(value: unknown, fallback: T): T {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  return value as T;
+}
+
+/**
+ * Run fn inside a transaction on a single connection. Issuing BEGIN/COMMIT
+ * through the pool (db.query) sends each statement to whichever connection is
+ * free, so nothing was actually transactional and a stray BEGIN could leave a
+ * pooled connection idle-in-transaction.
+ */
+async function inTransaction<T>(
+  client: PoolClient | undefined,
+  fn: (c: PoolClient) => Promise<T>
+): Promise<T> {
+  return client ? fn(client) : db.transaction(fn);
+}
+
 export class UserModel {
   static async create(
     input: CreateUserInput,
@@ -322,22 +351,14 @@ export class UserModel {
     ];
 
     try {
-      const dbClient = client || db;
-      const shouldCommit = !client;
-      
-      if (shouldCommit) {
-        await dbClient.query('BEGIN');
-      }
-
-      const userResult = await dbClient.query(userQuery, userValues);
-      await dbClient.query(oauthQuery, oauthValues);
-
-      if (shouldCommit) {
-        await dbClient.query('COMMIT');
-      }
+      const userResult = await inTransaction(client, async (c) => {
+        const result = await c.query(userQuery, userValues);
+        await c.query(oauthQuery, oauthValues);
+        return result;
+      });
 
       const user = userResult.rows[0];
-      user.oauth_providers = JSON.parse(user.oauth_providers || '[]');
+      user.oauth_providers = parseJsonColumn<string[]>(user.oauth_providers, []);
 
       logger.info('User created from OAuth successfully', { 
         userId, 
@@ -347,9 +368,6 @@ export class UserModel {
       
       return user;
     } catch (error) {
-      if (!client) {
-        await db.query('ROLLBACK');
-      }
       logger.error('Error creating user from OAuth', { 
         email: input.email,
         provider: input.provider,
@@ -382,7 +400,7 @@ export class UserModel {
 
       const user = result.rows[0];
       if (user) {
-        user.oauth_providers = JSON.parse(user.oauth_providers || '[]');
+        user.oauth_providers = parseJsonColumn<string[]>(user.oauth_providers, []);
       }
 
       return user || null;
@@ -446,19 +464,10 @@ export class UserModel {
     const updateUserValues = [userId, JSON.stringify(provider)];
 
     try {
-      const dbClient = client || db;
-      const shouldCommit = !client;
-      
-      if (shouldCommit) {
-        await dbClient.query('BEGIN');
-      }
-
-      await dbClient.query(oauthQuery, oauthValues);
-      await dbClient.query(updateUserQuery, updateUserValues);
-
-      if (shouldCommit) {
-        await dbClient.query('COMMIT');
-      }
+      await inTransaction(client, async (c) => {
+        await c.query(oauthQuery, oauthValues);
+        await c.query(updateUserQuery, updateUserValues);
+      });
 
       logger.info('OAuth account linked successfully', { 
         userId, 
@@ -466,9 +475,6 @@ export class UserModel {
         providerId 
       });
     } catch (error) {
-      if (!client) {
-        await db.query('ROLLBACK');
-      }
       logger.error('Error linking OAuth account', { 
         userId, 
         provider, 
@@ -531,7 +537,7 @@ export class UserModel {
 
       return result.rows.map(row => ({
         ...row,
-        profile_data: JSON.parse(row.profile_data || '{}'),
+        profile_data: parseJsonColumn<Record<string, unknown>>(row.profile_data, {}),
       }));
     } catch (error) {
       logger.error('Error getting OAuth accounts', { userId, error });
@@ -567,29 +573,18 @@ export class UserModel {
     const values = [userId, provider];
 
     try {
-      const dbClient = client || db;
-      const shouldCommit = !client;
-      
-      if (shouldCommit) {
-        await dbClient.query('BEGIN');
-      }
+      const result = await inTransaction(client, async (c) => {
+        const deleted = await c.query(deleteQuery, values);
+        await c.query(updateUserQuery, values);
+        return deleted;
+      });
 
-      const result = await dbClient.query(deleteQuery, values);
-      await dbClient.query(updateUserQuery, values);
-
-      if (shouldCommit) {
-        await dbClient.query('COMMIT');
-      }
-
-      const unlinked = result.rowCount > 0;
+      const unlinked = (result.rowCount ?? 0) > 0;
       if (unlinked) {
         logger.info('OAuth account unlinked successfully', { userId, provider });
       }
       return unlinked;
     } catch (error) {
-      if (!client) {
-        await db.query('ROLLBACK');
-      }
       logger.error('Error unlinking OAuth account', { 
         userId, 
         provider, 
