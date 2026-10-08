@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { UserModel } from '../models/User';
 import { AuthUtils } from '../utils/auth';
-import { createAuthenticationTokens, refreshAccessToken } from '../utils/refreshToken';
+import { createAuthenticationTokens, refreshAccessToken, revokeRefreshToken } from '../utils/refreshToken';
 import { performLogout } from '../utils/tokenBlacklist';
 import { extractTokenFromHeader } from '../utils/jwt';
 import { UserPayload, JWTPayload } from '../types/jwt';
@@ -339,6 +339,13 @@ export async function logout(req: Request, res: Response): Promise<void> {
       
       // Blacklist tokens
       logoutSuccess = await performLogout(token, refreshToken);
+
+      // The blacklist is only consulted for access tokens; /refresh checks the
+      // refresh-token store. Revoke there too, or the refresh token presented
+      // at logout keeps minting new access tokens.
+      if (refreshToken) {
+        await revokeRefreshToken(refreshToken);
+      }
     }
 
     // Handle Redis session logout
