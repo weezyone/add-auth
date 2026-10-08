@@ -123,22 +123,32 @@ export const detectSQLInjection = (input: string, config: SQLInjectionConfig = {
     return { detected: false, patterns: [] };
   }
 
-  const patterns = config.strict ? advancedSQLPatterns : sqlInjectionPatterns;
+  // Copy: pushing customPatterns into the shared module-level arrays made them
+  // apply to every later call (and grow without bound).
+  const patterns = [
+    ...(config.strict ? advancedSQLPatterns : sqlInjectionPatterns),
+    ...(config.customPatterns || [])
+  ];
   const detectedPatterns: string[] = [];
 
-  // Add custom patterns if provided
-  if (config.customPatterns) {
-    patterns.push(...config.customPatterns);
+  // URL decode the input first. A literal '%' (e.g. in a password) is not a
+  // valid escape and made decodeURIComponent throw, turning into a 500.
+  let decodedInput = input;
+  try {
+    decodedInput = decodeURIComponent(input);
+  } catch {
+    decodedInput = input;
   }
-
-  // URL decode the input first
-  const decodedInput = decodeURIComponent(input);
   
-  // Check against all patterns
+  // Check against all patterns. The patterns carry the /g flag, which makes
+  // RegExp#test stateful via lastIndex; reset it so results don't alternate
+  // between calls.
   for (const pattern of patterns) {
+    pattern.lastIndex = 0;
     if (pattern.test(decodedInput)) {
       detectedPatterns.push(pattern.source);
     }
+    pattern.lastIndex = 0;
   }
 
   return {
@@ -215,11 +225,15 @@ export const sqlInjectionPrevention = (config: SQLInjectionConfig = {}) => {
 
   return (req: Request, res: Response, next: NextFunction) => {
     try {
-      const checkInput = (obj: any, path: string = '', isWhitelisted: boolean = false) => {
+      // Returns true once a response has been sent (request blocked). It used to
+      // return `void res.status(400).json(...)`, i.e. undefined, so the caller
+      // never noticed, called next() anyway, and the "blocked" request ran the
+      // route handler after the 400 was already sent.
+      const checkInput = (obj: any, path: string = '', isWhitelisted: boolean = false): boolean => {
         if (typeof obj === 'string') {
           // Skip whitelisted fields
           if (isWhitelisted || cfg.whitelistedFields?.includes(path)) {
-            return null;
+            return false;
           }
 
           const detection = detectSQLInjection(obj, cfg);
@@ -232,16 +246,18 @@ export const sqlInjectionPrevention = (config: SQLInjectionConfig = {}) => {
                 ip: req.ip,
                 userAgent: req.get('user-agent'),
                 method: req.method,
-                url: req.url,
-                headers: req.headers
+                url: req.url
+                // request headers intentionally not logged: they carry bearer
+                // tokens, session cookies and CSRF tokens
               });
             }
 
             if (cfg.blockRequests) {
-              return void res.status(400).json({
+              res.status(400).json({
                 error: 'Malicious input detected',
                 message: 'Request blocked due to potential SQL injection attack'
               });
+              return true;
             }
           }
         } else if (Array.isArray(obj)) {
@@ -259,18 +275,13 @@ export const sqlInjectionPrevention = (config: SQLInjectionConfig = {}) => {
             }
           }
         }
-        return null;
+        return false;
       };
 
       // Check body, query, and params
-      const bodyResult = req.body ? checkInput(req.body, 'body') : null;
-      if (bodyResult) return bodyResult;
-
-      const queryResult = req.query ? checkInput(req.query, 'query') : null;
-      if (queryResult) return queryResult;
-
-      const paramsResult = req.params ? checkInput(req.params, 'params') : null;
-      if (paramsResult) return paramsResult;
+      if (req.body && checkInput(req.body, 'body')) return;
+      if (req.query && checkInput(req.query, 'query')) return;
+      if (req.params && checkInput(req.params, 'params')) return;
 
       next();
     } catch (error) {
