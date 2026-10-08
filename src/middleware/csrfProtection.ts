@@ -51,6 +51,21 @@ export const generateCSRFToken = async (sessionId: string, config: CSRFConfig = 
   const cfg = { ...defaultConfig, ...config };
   
   try {
+    const key = `csrf:${sessionId}`;
+
+    // Reuse the session's existing, unexpired secret. Tokens are salted per
+    // call, so every token minted from the same secret stays valid. Minting a
+    // fresh secret on every safe request (any GET passing through
+    // csrfProtection) silently invalidated every token handed out before it.
+    const existing = await redisClient.get(key);
+    if (existing) {
+      const stored: CSRFTokenData = JSON.parse(existing);
+      if (stored.secret && Date.now() < stored.expiresAt) {
+        const token = csrfTokens.create(stored.secret);
+        return { token, secret: stored.secret };
+      }
+    }
+
     const secret = csrfTokens.secretSync();
     const token = csrfTokens.create(secret);
     
@@ -62,7 +77,6 @@ export const generateCSRFToken = async (sessionId: string, config: CSRFConfig = 
     };
 
     // Store in Redis with expiration
-    const key = `csrf:${sessionId}`;
     await redisClient.setex(key, Math.floor(cfg.tokenExpiry / 1000), JSON.stringify(tokenData));
     
     logger.debug('CSRF token generated', { 

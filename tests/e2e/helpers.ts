@@ -108,7 +108,7 @@ export class Client {
   }
 
   async register(email = uniqueEmail(), password = STRONG_PASSWORD) {
-    return this.post('/api/auth/register', { email, password, username: 'e2euser' });
+    return this.post('/api/auth/register', { email, password, confirmPassword: password, username: 'e2euser' });
   }
 
   async login(email: string, password = STRONG_PASSWORD) {
