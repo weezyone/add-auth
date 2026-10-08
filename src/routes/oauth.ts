@@ -15,7 +15,10 @@ router.get('/google',
   })
 );
 
-router.get('/google/callback',
+// The provider redirects to `${OAUTH_CALLBACK_URL}/google` (config/passport.ts),
+// i.e. /auth/callback/google by default and in ADVANCED_AUTH_SETUP.md, but only
+// /auth/google/callback was mounted, so every real callback 404'd. Serve both.
+router.get(['/callback/google', '/google/callback'],
   passport.authenticate('google', { failureRedirect: '/login?error=oauth_failed' }),
   async (req, res) => {
     try {
@@ -86,7 +89,7 @@ router.get('/github',
   })
 );
 
-router.get('/github/callback',
+router.get(['/callback/github', '/github/callback'],
   passport.authenticate('github', { failureRedirect: '/login?error=oauth_failed' }),
   async (req, res) => {
     try {
