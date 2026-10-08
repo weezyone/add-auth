@@ -21,7 +21,7 @@ function mockGoogle(profile: Record<string, unknown>) {
   nock('https://www.googleapis.com')
     .post('/oauth2/v4/token')
     .reply(200, { access_token: 'google-at', refresh_token: 'google-rt', token_type: 'Bearer', expires_in: 3600 })
-    .get('/oauth2/v3/userinfo')
+    .get('/oauth2/v3/userinfo').query(true)
     .reply(200, profile);
 }
 
@@ -30,8 +30,8 @@ function mockGitHub(user: Record<string, unknown>, emails: Array<Record<string, 
     .post('/login/oauth/access_token')
     .reply(200, { access_token: 'github-at', token_type: 'bearer', scope: 'user:email' });
   nock('https://api.github.com')
-    .get('/user').reply(200, user)
-    .get('/user/emails').reply(200, emails);
+    .get('/user').query(true).reply(200, user)
+    .get('/user/emails').query(true).reply(200, emails);
 }
 
 /** Start the flow like a browser would, return the authorize URL. */
@@ -140,6 +140,21 @@ describe('OAuth + RBAC (src/app.ts)', () => {
       const res = await victim.get('/auth/google/callback?code=attacker-code&state=forged');
       expect(res.headers.location).not.toBe('/dashboard');
       expect((await victim.get('/dashboard')).status).not.toBe(200);
+    });
+
+    it('does not link an existing account via an unverified Google email', async () => {
+      await db.query(
+        "INSERT INTO users (email, password_hash, status, email_verified) VALUES ('victim@example.com', 'x', 'active', true)",
+      );
+      const agent = request.agent(app);
+      const url = await startFlow(agent, 'google');
+      mockGoogle({ ...googleProfile('victim@example.com', false), sub: 'google-evil' });
+      const cb = await completeFlow(agent, url);
+      expect(cb.headers.location).not.toBe('/dashboard');
+      const linked = await db.query(
+        "SELECT 1 FROM oauth_accounts oa JOIN users u ON u.id = oa.user_id WHERE u.email = 'victim@example.com'",
+      );
+      expect(linked.rowCount).toBe(0);
     });
 
     it('logout destroys the session', async () => {
