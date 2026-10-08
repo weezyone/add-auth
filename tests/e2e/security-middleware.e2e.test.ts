@@ -46,6 +46,30 @@ describe('security middleware', () => {
       expect(statuses.slice(0, 5).every((s) => s === 401)).toBe(true);
     });
 
+    it('does not throttle a signed-in user\'s normal use of /api/auth (successful requests)', async () => {
+      // The blanket /api/auth limiter allowed 10 requests per 15 min per IP,
+      // counting every request; register -> login -> a few /me calls was
+      // enough to lock a real user (or a whole office NAT) out.
+      const client = new Client(app);
+      const reg = await client.register();
+      const token = reg.body.tokens.accessToken;
+      const statuses: number[] = [];
+      for (let i = 0; i < 15; i++) {
+        statuses.push((await client.get('/api/auth/me').set('Authorization', `Bearer ${token}`)).status);
+      }
+      expect(statuses.every((s) => s === 200)).toBe(true);
+    });
+
+    it('still throttles repeated failures across /api/auth endpoints', async () => {
+      const client = new Client(app);
+      const statuses: number[] = [];
+      for (let i = 0; i < 12; i++) {
+        statuses.push((await client.get('/api/auth/me').set('Authorization', 'Bearer not-a-jwt')).status);
+      }
+      expect(statuses.slice(0, 10).every((s) => s === 401)).toBe(true);
+      expect(statuses.slice(10)).toEqual([429, 429]);
+    });
+
     it('cannot be bypassed by rotating a spoofed X-Forwarded-For header', async () => {
       // An attacker can fetch a fresh CSRF token for each spoofed address, so
       // the only thing standing between them and unlimited guesses is that the

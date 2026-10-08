@@ -84,6 +84,12 @@ export const rateLimiters = {
     }),
     windowMs: 15 * 60 * 1000, // 15 minutes
     max: 10, // limit each IP to 10 auth attempts per windowMs
+    // Applied to every /api/auth route (incl. /me, /csrf-token, /verify-email),
+    // so count only failures: counting every request locked out ordinary
+    // sign-up -> verify -> login -> use (or a whole office behind one NAT).
+    // Brute-force attempts fail and still count; endpoint-specific limiters
+    // (login, registration, refresh, ...) still count every request.
+    skipSuccessfulRequests: true,
     message: {
       error: 'Too many authentication attempts from this IP, please try again later.',
       retryAfter: '15 minutes'
