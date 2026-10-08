@@ -18,6 +18,11 @@ const envSchema = z.object({
   // Server
   PORT: z.coerce.number().default(3000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  // Express 'trust proxy' setting. Leave unset when the app is reached directly;
+  // set to the number of reverse-proxy hops (e.g. 1) or a subnet list when it
+  // sits behind a load balancer. 'true' trusts any client-supplied
+  // X-Forwarded-For and lets callers pick their own rate-limit key.
+  TRUST_PROXY: z.string().optional(),
 
   // Security
   JWT_SECRET: z.string().min(32),
@@ -57,6 +62,13 @@ const envSchema = z.object({
 // Validate environment variables
 const env = envSchema.parse(process.env);
 
+function parseTrustProxy(value: string | undefined): boolean | number | string {
+  if (value === undefined || value.trim() === '' || value === 'false') return false;
+  if (value === 'true') return true;
+  if (/^\d+$/.test(value.trim())) return parseInt(value, 10);
+  return value; // e.g. 'loopback' or '10.0.0.0/8, 127.0.0.1'
+}
+
 export const appConfig = {
   database: {
     url: env.DATABASE_URL,
@@ -70,6 +82,7 @@ export const appConfig = {
   server: {
     port: env.PORT,
     nodeEnv: env.NODE_ENV,
+    trustProxy: parseTrustProxy(env.TRUST_PROXY),
   },
   security: {
     jwtSecret: env.JWT_SECRET,

@@ -53,8 +53,10 @@ app.use(cors({
   exposedHeaders: ['X-CSRF-Token']
 }));
 
-// Trust proxy for accurate IP addresses
-app.set('trust proxy', true);
+// Trust proxy: configurable via TRUST_PROXY (default: off). Hard-coding `true`
+// made req.ip the left-most X-Forwarded-For entry, which any client can set,
+// so rotating that header bypassed every IP-keyed rate limiter.
+app.set('trust proxy', appConfig.server.trustProxy);
 
 // Apply security middleware based on environment
 // NODE_ENV is 'development' | 'production' | 'test', but the security presets are
