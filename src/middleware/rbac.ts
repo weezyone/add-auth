@@ -49,7 +49,7 @@ export function requireRole(roles: string | string[], options: Partial<RBACOptio
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       if (!req.session?.isAuthenticated || !req.session?.userId) {
-        return handleUnauthorized(req, res, 'Authentication required', options.onUnauthorized);
+        return handleUnauthenticated(req, res, options.onUnauthorized);
       }
 
       const userId = req.session.userId;
@@ -111,7 +111,7 @@ export function requirePermission(permissions: string | string[], options: Parti
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       if (!req.session?.isAuthenticated || !req.session?.userId) {
-        return handleUnauthorized(req, res, 'Authentication required', options.onUnauthorized);
+        return handleUnauthenticated(req, res, options.onUnauthorized);
       }
 
       const userId = req.session.userId;
@@ -176,7 +176,7 @@ export function requireRoleOrPermission(
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       if (!req.session?.isAuthenticated || !req.session?.userId) {
-        return handleUnauthorized(req, res, 'Authentication required', options.onUnauthorized);
+        return handleUnauthenticated(req, res, options.onUnauthorized);
       }
 
       const userId = req.session.userId;
@@ -245,7 +245,7 @@ export function requireOwnership(resourceUserIdField: string = 'user_id') {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       if (!req.session?.isAuthenticated || !req.session?.userId) {
-        return handleUnauthorized(req, res, 'Authentication required');
+        return handleUnauthenticated(req, res);
       }
 
       const userId = req.session.userId;
@@ -311,7 +311,7 @@ export const requireModerator = requireRole(['admin', 'moderator']);
 export function requireTrustScore(minimumScore: number = 0.5) {
   return (req: Request, res: Response, next: NextFunction): void => {
     if (!req.session?.isAuthenticated || !req.session?.userId) {
-      return handleUnauthorized(req, res, 'Authentication required');
+      return handleUnauthenticated(req, res);
     }
 
     const trustScore = req.session.trustScore || 0;
@@ -329,6 +329,28 @@ export function requireTrustScore(minimumScore: number = 0.5) {
 
     next();
   };
+}
+
+/**
+ * Handle a request with no authenticated session: 401, so clients know to
+ * (re)authenticate. These paths used to go through handleUnauthorized and
+ * answer 403, which tells a client that logging in won't help.
+ */
+function handleUnauthenticated(
+  req: Request,
+  res: Response,
+  customHandler?: (req: Request, res: Response) => void
+): void {
+  if (customHandler) {
+    customHandler(req, res);
+    return;
+  }
+
+  res.status(401).json({
+    error: 'Authentication required',
+    message: 'Please log in to access this resource',
+    code: 'AUTHENTICATION_REQUIRED',
+  });
 }
 
 /**
