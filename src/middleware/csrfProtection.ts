@@ -212,10 +212,11 @@ export const validateCSRFMiddleware = (config: CSRFConfig = {}) => {
         token = req.query._csrf as string;
       }
       
-      if (!token && req.cookies && req.cookies[cfg.cookieName]) {
-        token = req.cookies[cfg.cookieName];
-      }
-      
+      // Deliberately NOT falling back to the csrf-token cookie: the browser
+      // attaches cookies to cross-site requests automatically, so accepting the
+      // token from the cookie alone defeats CSRF protection. The client must
+      // echo the token in the header/body.
+
       if (!token) {
         logger.warn('CSRF token missing from request', {
           sessionId,
