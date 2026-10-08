@@ -163,7 +163,6 @@ router.get('/link/google',
   },
   passport.authenticate('google', { 
     scope: ['profile', 'email'],
-    state: 'link_account',
   })
 );
 
@@ -176,7 +175,6 @@ router.get('/link/github',
   },
   passport.authenticate('github', { 
     scope: ['user:email'],
-    state: 'link_account',
   })
 );
 

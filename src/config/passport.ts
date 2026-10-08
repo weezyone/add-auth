@@ -53,6 +53,11 @@ if (appConfig.oauth.google.clientId && appConfig.oauth.google.clientSecret) {
         clientID: appConfig.oauth.google.clientId,
         clientSecret: appConfig.oauth.google.clientSecret,
         callbackURL: `${appConfig.oauth.callbackUrl}/google`,
+        // Generate a per-session `state` nonce and verify it on callback.
+        // Without it, an attacker can complete the flow with their own code in
+        // a victim's browser and log the victim into the attacker's account
+        // (OAuth login CSRF).
+        state: true,
       },
       async (accessToken, refreshToken, profile, done) => {
         try {
@@ -165,6 +170,8 @@ if (appConfig.oauth.github.clientId && appConfig.oauth.github.clientSecret) {
         // flags so we can refuse unverified addresses.
         scope: ['user:email'],
         allRawEmails: true,
+        // see the Google strategy: OAuth login-CSRF protection
+        state: true,
       } as any,
       async (accessToken, refreshToken, profile, done) => {
         try {
