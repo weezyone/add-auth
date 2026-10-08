@@ -4,8 +4,12 @@ export interface UserPayload {
   roles?: string[];
 }
 
+export type TokenType = 'access' | 'refresh';
+
 export interface JWTPayload extends UserPayload {
   sessionId?: string;
+  /** Distinguishes access from refresh tokens; both are signed with the same secret. */
+  type?: TokenType;
   iat?: number;
   exp?: number;
 }

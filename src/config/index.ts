@@ -18,6 +18,11 @@ const envSchema = z.object({
   // Server
   PORT: z.coerce.number().default(3000),
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
+  // Express 'trust proxy' setting. Leave unset when the app is reached directly;
+  // set to the number of reverse-proxy hops (e.g. 1) or a subnet list when it
+  // sits behind a load balancer. 'true' trusts any client-supplied
+  // X-Forwarded-For and lets callers pick their own rate-limit key.
+  TRUST_PROXY: z.string().optional(),
 
   // Security
   JWT_SECRET: z.string().min(32),
@@ -52,10 +57,21 @@ const envSchema = z.object({
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
   OAUTH_CALLBACK_URL: z.string().default('http://localhost:3000/auth/callback'),
+
+  // Email verification
+  FRONTEND_URL: z.string().default('http://localhost:3000'),
+  EMAIL_VERIFICATION_TTL_HOURS: z.coerce.number().positive().default(24),
 });
 
 // Validate environment variables
 const env = envSchema.parse(process.env);
+
+function parseTrustProxy(value: string | undefined): boolean | number | string {
+  if (value === undefined || value.trim() === '' || value === 'false') return false;
+  if (value === 'true') return true;
+  if (/^\d+$/.test(value.trim())) return parseInt(value, 10);
+  return value; // e.g. 'loopback' or '10.0.0.0/8, 127.0.0.1'
+}
 
 export const appConfig = {
   database: {
@@ -70,6 +86,7 @@ export const appConfig = {
   server: {
     port: env.PORT,
     nodeEnv: env.NODE_ENV,
+    trustProxy: parseTrustProxy(env.TRUST_PROXY),
   },
   security: {
     jwtSecret: env.JWT_SECRET,
@@ -104,6 +121,12 @@ export const appConfig = {
       clientSecret: env.GITHUB_CLIENT_SECRET,
     },
     callbackUrl: env.OAUTH_CALLBACK_URL,
+  },
+  emailVerification: {
+    // Links point at the frontend, which POSTs the token to /api/auth/verify-email
+    // (a GET that verifies would be consumed by mail-scanner link prefetching).
+    frontendUrl: env.FRONTEND_URL,
+    ttlHours: env.EMAIL_VERIFICATION_TTL_HOURS,
   },
 };
 

@@ -1,7 +1,7 @@
 import { Request, Response } from 'express';
 import { UserModel } from '../models/User';
 import { AuthUtils } from '../utils/auth';
-import { createAuthenticationTokens, refreshAccessToken } from '../utils/refreshToken';
+import { createAuthenticationTokens, refreshAccessToken, revokeRefreshToken, validateRefreshToken } from '../utils/refreshToken';
 import { performLogout } from '../utils/tokenBlacklist';
 import { extractTokenFromHeader } from '../utils/jwt';
 import { UserPayload, JWTPayload } from '../types/jwt';
@@ -11,6 +11,15 @@ import { defaultPasswordSecurity } from '../security/password-security';
 import { SessionService } from '../services/sessionService';
 import { FingerprintService } from '../utils/fingerprint';
 import { RoleModel } from '../models/Role';
+import { EmailVerificationService, EMAIL_NOT_VERIFIED } from '../services/emailVerificationService';
+
+function sendEmailNotVerified(res: Response): void {
+  res.status(403).json({
+    error: 'Email not verified',
+    code: EMAIL_NOT_VERIFIED,
+    message: 'Please verify your email address before logging in. Check your inbox or request a new link.'
+  });
+}
 
 /**
  * Register a new user
@@ -44,65 +53,36 @@ export async function register(req: Request, res: Response): Promise<void> {
     // Hash password
     const hashedPassword = await AuthUtils.hashPassword(password);
 
-    // Create user
+    // Create user (unverified). No tokens or session until the email is
+    // verified: login refuses unverified accounts.
     const user = await UserModel.create({
       email: email.toLowerCase().trim(),
       password: hashedPassword
     });
 
-    // Create Redis session with fingerprinting
-    const sessionToken = AuthUtils.generateSecureToken();
-    const fingerprint = FingerprintService.generateFingerprint(req);
-    
-    const redisSession = await SessionService.createSession({
-      user_id: user.id,
-      token: sessionToken,
-      expires_at: AuthUtils.calculateSessionExpiration(),
-      ip_address: AuthUtils.getClientIp(req),
-      user_agent: AuthUtils.getUserAgent(req) || undefined,
-      fingerprint: fingerprint
-    });
+    // A mail failure must not fail the registration; the user can request a
+    // new link via /api/auth/resend-verification.
+    try {
+      await EmailVerificationService.issue(user);
+    } catch (mailError) {
+      logger.error('Failed to send verification email', { userId: user.id, error: mailError });
+    }
 
-    // Generate JWT tokens
-    const userPayload: UserPayload = {
-      id: user.id,
-      email: user.email,
-      roles: [] // Default roles
-    };
-
-    const tokens = await createAuthenticationTokens(userPayload, {
-      ipAddress: AuthUtils.getClientIp(req),
-      userAgent: AuthUtils.getUserAgent(req) || undefined
-    });
-
-    logger.info('User registered successfully', { 
-      userId: user.id, 
-      email: user.email,
-      sessionId: redisSession.id
-    });
-
-    // Set session cookie
-    res.cookie('sessionId', redisSession.id, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 24 * 60 * 60 * 1000, // 24 hours
+    logger.info('User registered successfully', {
+      userId: user.id,
+      email: user.email
     });
 
     res.status(201).json({
-      message: 'User registered successfully',
+      message: 'Registration successful. Check your email to verify your account before logging in.',
+      verificationRequired: true,
       user: {
         id: user.id,
         email: user.email,
         created_at: user.created_at,
-        status: user.status
-      },
-      session: {
-        id: redisSession.id,
-        expires_at: redisSession.expires_at,
-        trust_score: redisSession.trust_score
-      },
-      tokens
+        status: user.status,
+        email_verified: user.email_verified
+      }
     });
   } catch (error: any) {
     logger.error('Registration error:', error);
@@ -150,8 +130,11 @@ export async function login(req: Request, res: Response): Promise<void> {
       return;
     }
 
-    // Verify password
-    const passwordValid = await AuthUtils.verifyPassword(password, (user as any).password_hash);
+    // Verify password (OAuth-only accounts have no password hash)
+    const passwordHash = (user as any).password_hash as string | null;
+    const passwordValid = passwordHash
+      ? await AuthUtils.verifyPassword(password, passwordHash)
+      : false;
     if (!passwordValid) {
       // Increment failed attempts
       await UserModel.incrementFailedLoginAttempts(user.id);
@@ -160,6 +143,14 @@ export async function login(req: Request, res: Response): Promise<void> {
         error: 'Invalid credentials',
         message: 'Email or password is incorrect'
       });
+      return;
+    }
+
+    // Only after the password checks out, so the verification state isn't
+    // revealed to someone who doesn't know the password.
+    if (!user.email_verified) {
+      logger.info('Login refused: email not verified', { userId: user.id });
+      sendEmailNotVerified(res);
       return;
     }
 
@@ -339,6 +330,13 @@ export async function logout(req: Request, res: Response): Promise<void> {
       
       // Blacklist tokens
       logoutSuccess = await performLogout(token, refreshToken);
+
+      // The blacklist is only consulted for access tokens; /refresh checks the
+      // refresh-token store. Revoke there too, or the refresh token presented
+      // at logout keeps minting new access tokens.
+      if (refreshToken) {
+        await revokeRefreshToken(refreshToken);
+      }
     }
 
     // Handle Redis session logout
@@ -410,6 +408,24 @@ export async function refresh(req: Request, res: Response): Promise<void> {
       return;
     }
 
+    // The account must still be usable: active and verified. (Checked before
+    // rotation so a refused refresh doesn't burn the token.)
+    const validation = await validateRefreshToken(refreshToken);
+    if (validation.valid && validation.payload) {
+      const user = await UserModel.findById(validation.payload.id);
+      if (!user || user.status !== UserStatus.ACTIVE) {
+        res.status(401).json({
+          error: 'Invalid refresh token',
+          message: 'Please login again'
+        });
+        return;
+      }
+      if (!user.email_verified) {
+        sendEmailNotVerified(res);
+        return;
+      }
+    }
+
     // Refresh tokens
     const tokens = await refreshAccessToken(refreshToken, true);
 
@@ -435,6 +451,54 @@ export async function refresh(req: Request, res: Response): Promise<void> {
       message: 'An error occurred while refreshing tokens'
     });
   }
+}
+
+/**
+ * Verify an email address with the token from the verification email
+ */
+export async function verifyEmail(req: Request, res: Response): Promise<void> {
+  try {
+    const result = await EmailVerificationService.verify(req.body.token);
+    if (!result.ok) {
+      const messages = {
+        VERIFICATION_TOKEN_INVALID: 'This verification link is not valid.',
+        VERIFICATION_TOKEN_EXPIRED: 'This verification link has expired. Request a new one.',
+        VERIFICATION_TOKEN_USED: 'This verification link has already been used or replaced by a newer one.',
+      } as const;
+      res.status(400).json({
+        error: 'Email verification failed',
+        code: result.code,
+        message: messages[result.code]
+      });
+      return;
+    }
+
+    res.json({
+      message: 'Email verified. You can now log in.',
+      code: 'EMAIL_VERIFIED'
+    });
+  } catch (error: any) {
+    logger.error('Email verification error:', error);
+    res.status(500).json({
+      error: 'Email verification failed',
+      message: 'An error occurred while verifying the email address'
+    });
+  }
+}
+
+/**
+ * Resend the verification email. Always answers 202 with the same body, and
+ * does the work after responding, so neither the response nor its timing
+ * reveals whether the address has an (unverified) account.
+ */
+export async function resendVerification(req: Request, res: Response): Promise<void> {
+  const { email } = req.body;
+  res.status(202).json({
+    message: 'If an account with that email exists and is not yet verified, a new verification link has been sent.'
+  });
+  EmailVerificationService.resend(email).catch((error) => {
+    logger.error('Resend verification failed', { error });
+  });
 }
 
 /**

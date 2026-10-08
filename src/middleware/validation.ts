@@ -155,6 +155,26 @@ export const validationSchemas = {
       })
   }),
 
+  emailVerification: Joi.object({
+    token: Joi.string()
+      .trim()
+      .max(256)
+      .required()
+      .messages({
+        'any.required': 'Verification token is required'
+      })
+  }),
+
+  resendVerification: Joi.object({
+    email: Joi.string()
+      .email({ tlds: { allow: false } })
+      .required()
+      .messages({
+        'string.email': 'Please provide a valid email address',
+        'any.required': 'Email is required'
+      })
+  }),
+
   emailParam: Joi.object({
     email: Joi.string()
       .email({ tlds: { allow: false } })

@@ -6,6 +6,7 @@ import { logger } from '../utils/logger';
 import { FingerprintService, DeviceFingerprint } from '../utils/fingerprint';
 import { SessionModel } from '../models/Session';
 import { SessionService, RedisSession } from '../services/sessionService';
+import { authenticateToken } from './auth';
 
 declare module 'express-session' {
   interface SessionData {
@@ -363,8 +364,11 @@ export const enhancedAuthMiddleware = async (
       });
     }
 
-    // If we get here, the standard JWT middleware should handle it
-    next();
+    // No Redis session: authenticate the bearer token (signature, expiry,
+    // blacklist, token type). Previously this just called next() without
+    // verifying anything, so a valid token got 401 from the controller (no
+    // req.user) and nothing downstream ever checked the token.
+    return authenticateToken(req, res, next);
   } catch (error) {
     logger.error('Error in enhanced authentication middleware', { error });
     next(error);

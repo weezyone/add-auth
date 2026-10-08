@@ -12,6 +12,7 @@ import {
   securityMiddleware,
   authenticateToken
 } from '../middleware';
+import { createCustomRateLimiter } from '../middleware/rateLimiter';
 import { redisSessionValidationMiddleware, enhancedAuthMiddleware, sessionSecurityMiddleware } from '../middleware/session';
 import {
   register,
@@ -24,10 +25,29 @@ import {
   revokeSession,
   revokeAllOtherSessions,
   extendSession,
-  changePassword
+  changePassword,
+  verifyEmail,
+  resendVerification
 } from '../controllers/auth';
 
 const router = Router();
+
+// Email verification limits (per IP). Resend is additionally limited to one
+// email per address per minute inside EmailVerificationService.
+const verifyEmailLimiter = createCustomRateLimiter({
+  windowMs: 15 * 60 * 1000,
+  max: 20,
+  keyPrefix: 'verify-email',
+  message: 'Too many verification attempts. Please try again later.',
+  retryAfter: '15 minutes'
+});
+const resendVerificationLimiter = createCustomRateLimiter({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  keyPrefix: 'resend-verification',
+  message: 'Too many verification emails requested. Please try again later.',
+  retryAfter: '1 hour'
+});
 
 // Apply base security middleware to all auth routes
 router.use(securityMiddleware.auth);
@@ -44,6 +64,28 @@ router.post(
   validateBody(validationSchemas.userRegistration),
   // Controller implementation
   register
+);
+
+/**
+ * POST /api/auth/verify-email
+ * Body: { token }. Consumes the token from the verification email (once).
+ */
+router.post(
+  '/verify-email',
+  verifyEmailLimiter,
+  validateBody(validationSchemas.emailVerification),
+  verifyEmail
+);
+
+/**
+ * POST /api/auth/resend-verification
+ * Body: { email }. Always 202; never reveals whether the account exists.
+ */
+router.post(
+  '/resend-verification',
+  resendVerificationLimiter,
+  validateBody(validationSchemas.resendVerification),
+  resendVerification
 );
 
 /**

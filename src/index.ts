@@ -53,11 +53,21 @@ app.use(cors({
   exposedHeaders: ['X-CSRF-Token']
 }));
 
-// Trust proxy for accurate IP addresses
-app.set('trust proxy', true);
+// Trust proxy: configurable via TRUST_PROXY (default: off). Hard-coding `true`
+// made req.ip the left-most X-Forwarded-For entry, which any client can set,
+// so rotating that header bypassed every IP-keyed rate limiter.
+app.set('trust proxy', appConfig.server.trustProxy);
 
 // Apply security middleware based on environment
-const environment = (appConfig.server.nodeEnv as 'production' | 'development' | 'testing') || 'development';
+// NODE_ENV is 'development' | 'production' | 'test', but the security presets are
+// keyed 'development' | 'production' | 'testing'. Map explicitly so NODE_ENV=test
+// doesn't look up an undefined preset and crash at import time.
+const securityEnvironment: Record<string, 'production' | 'development' | 'testing'> = {
+  production: 'production',
+  development: 'development',
+  test: 'testing',
+};
+const environment = securityEnvironment[appConfig.server.nodeEnv] || 'development';
 app.use(applySecurityMiddleware(environment));
 
 // Basic middleware
@@ -175,6 +185,10 @@ async function startServer() {
   }
 }
 
-startServer();
+// Importing the app (e.g. from supertest) must not bind a port or open Redis
+// connections as a side effect; only start the server outside of tests.
+if (appConfig.server.nodeEnv !== 'test') {
+  startServer();
+}
 
 export default app;

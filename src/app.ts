@@ -1,6 +1,6 @@
 import express from 'express';
 import passport from './config/passport';
-import { createRedisClient } from './utils/redis';
+import { createRedisClient, getRedisClient } from './utils/redis';
 import { sessionMiddleware, fingerprintMiddleware, sessionActivityMiddleware } from './middleware/session';
 import { requireAuth, requireRole, requirePermission, requireAdmin } from './middleware/rbac';
 import oauthRoutes from './routes/oauth';
@@ -28,21 +28,50 @@ async function initializeRedis() {
   }
 }
 
-// Session middleware (requires Redis)
+// Session + Passport middleware (requires Redis).
+//
+// These used to be app.use()'d from initializeApp(), i.e. *after* every route
+// and the 404 handler had been registered, so they never ran; and
+// passport.session() was registered before any session existed, so every
+// request that reached it failed with "Login sessions require session
+// support". Register them here, in order, and skip them (rather than 500)
+// while no Redis client is connected.
+function redisReady(): boolean {
+  try {
+    getRedisClient();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const sessionChain: express.RequestHandler[] = [
+  sessionMiddleware,
+  fingerprintMiddleware,
+  sessionActivityMiddleware,
+  passport.session(),
+];
+
+app.use(passport.initialize());
+app.use((req, res, next) => {
+  if (!redisReady()) {
+    return next();
+  }
+  let i = 0;
+  const run = (err?: any): void => {
+    if (err || i >= sessionChain.length) return next(err);
+    sessionChain[i++](req, res, run);
+  };
+  run();
+});
+
 async function setupSessionMiddleware() {
   if (redisInitialized) {
-    app.use(sessionMiddleware);
-    app.use(fingerprintMiddleware);
-    app.use(sessionActivityMiddleware);
     logger.info('Session middleware initialized with Redis');
   } else {
     logger.warn('Session middleware not initialized - Redis connection failed');
   }
 }
-
-// Passport middleware
-app.use(passport.initialize());
-app.use(passport.session());
 
 // OAuth routes
 app.use('/auth', oauthRoutes);

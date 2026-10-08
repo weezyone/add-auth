@@ -11,6 +11,20 @@ import {
 } from '../types/user';
 import { db } from '../database/connection';
 import { logger } from '../utils/logger';
+import { parseJsonColumn } from '../utils/pgJson';
+
+/**
+ * Run fn inside a transaction on a single connection. Issuing BEGIN/COMMIT
+ * through the pool (db.query) sends each statement to whichever connection is
+ * free, so nothing was actually transactional and a stray BEGIN could leave a
+ * pooled connection idle-in-transaction.
+ */
+async function inTransaction<T>(
+  client: PoolClient | undefined,
+  fn: (c: PoolClient) => Promise<T>
+): Promise<T> {
+  return client ? fn(client) : db.transaction(fn);
+}
 
 export class UserModel {
   static async create(
@@ -274,6 +288,28 @@ export class UserModel {
     }
   }
 
+  /**
+   * The user proved control of their email through an OAuth provider that
+   * marks it verified. If the account was still unverified, its password was
+   * set by someone who never proved they own the address (possibly a squatter
+   * waiting for the owner to verify it), so it is discarded; the owner can set
+   * one via password reset.
+   */
+  static async markEmailVerifiedViaOAuth(userId: string, client?: PoolClient): Promise<void> {
+    const query = `
+      UPDATE users
+      SET password_hash = CASE WHEN email_verified THEN password_hash ELSE NULL END,
+          email_verified = TRUE,
+          email_verified_at = COALESCE(email_verified_at, NOW())
+      WHERE id = $1
+    `;
+    if (client) {
+      await client.query(query, [userId]);
+    } else {
+      await db.query(query, [userId]);
+    }
+  }
+
   // OAuth-related methods
   static async createFromOAuth(
     input: CreateOAuthUserInput,
@@ -283,8 +319,8 @@ export class UserModel {
     const now = new Date();
     
     const userQuery = `
-      INSERT INTO users (id, email, created_at, updated_at, status, email_verified, first_name, last_name, oauth_providers, failed_login_attempts)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      INSERT INTO users (id, email, created_at, updated_at, status, email_verified, first_name, last_name, oauth_providers, failed_login_attempts, email_verified_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CASE WHEN $6::boolean THEN NOW() END)
       RETURNING id, email, created_at, updated_at, status, email_verified, last_login, failed_login_attempts, locked_until, first_name, last_name, oauth_providers
     `;
 
@@ -322,22 +358,14 @@ export class UserModel {
     ];
 
     try {
-      const dbClient = client || db;
-      const shouldCommit = !client;
-      
-      if (shouldCommit) {
-        await dbClient.query('BEGIN');
-      }
-
-      const userResult = await dbClient.query(userQuery, userValues);
-      await dbClient.query(oauthQuery, oauthValues);
-
-      if (shouldCommit) {
-        await dbClient.query('COMMIT');
-      }
+      const userResult = await inTransaction(client, async (c) => {
+        const result = await c.query(userQuery, userValues);
+        await c.query(oauthQuery, oauthValues);
+        return result;
+      });
 
       const user = userResult.rows[0];
-      user.oauth_providers = JSON.parse(user.oauth_providers || '[]');
+      user.oauth_providers = parseJsonColumn<string[]>(user.oauth_providers, []);
 
       logger.info('User created from OAuth successfully', { 
         userId, 
@@ -347,9 +375,6 @@ export class UserModel {
       
       return user;
     } catch (error) {
-      if (!client) {
-        await db.query('ROLLBACK');
-      }
       logger.error('Error creating user from OAuth', { 
         email: input.email,
         provider: input.provider,
@@ -382,7 +407,7 @@ export class UserModel {
 
       const user = result.rows[0];
       if (user) {
-        user.oauth_providers = JSON.parse(user.oauth_providers || '[]');
+        user.oauth_providers = parseJsonColumn<string[]>(user.oauth_providers, []);
       }
 
       return user || null;
@@ -446,19 +471,10 @@ export class UserModel {
     const updateUserValues = [userId, JSON.stringify(provider)];
 
     try {
-      const dbClient = client || db;
-      const shouldCommit = !client;
-      
-      if (shouldCommit) {
-        await dbClient.query('BEGIN');
-      }
-
-      await dbClient.query(oauthQuery, oauthValues);
-      await dbClient.query(updateUserQuery, updateUserValues);
-
-      if (shouldCommit) {
-        await dbClient.query('COMMIT');
-      }
+      await inTransaction(client, async (c) => {
+        await c.query(oauthQuery, oauthValues);
+        await c.query(updateUserQuery, updateUserValues);
+      });
 
       logger.info('OAuth account linked successfully', { 
         userId, 
@@ -466,9 +482,6 @@ export class UserModel {
         providerId 
       });
     } catch (error) {
-      if (!client) {
-        await db.query('ROLLBACK');
-      }
       logger.error('Error linking OAuth account', { 
         userId, 
         provider, 
@@ -531,7 +544,7 @@ export class UserModel {
 
       return result.rows.map(row => ({
         ...row,
-        profile_data: JSON.parse(row.profile_data || '{}'),
+        profile_data: parseJsonColumn<Record<string, unknown>>(row.profile_data, {}),
       }));
     } catch (error) {
       logger.error('Error getting OAuth accounts', { userId, error });
@@ -567,29 +580,18 @@ export class UserModel {
     const values = [userId, provider];
 
     try {
-      const dbClient = client || db;
-      const shouldCommit = !client;
-      
-      if (shouldCommit) {
-        await dbClient.query('BEGIN');
-      }
+      const result = await inTransaction(client, async (c) => {
+        const deleted = await c.query(deleteQuery, values);
+        await c.query(updateUserQuery, values);
+        return deleted;
+      });
 
-      const result = await dbClient.query(deleteQuery, values);
-      await dbClient.query(updateUserQuery, values);
-
-      if (shouldCommit) {
-        await dbClient.query('COMMIT');
-      }
-
-      const unlinked = result.rowCount > 0;
+      const unlinked = (result.rowCount ?? 0) > 0;
       if (unlinked) {
         logger.info('OAuth account unlinked successfully', { userId, provider });
       }
       return unlinked;
     } catch (error) {
-      if (!client) {
-        await db.query('ROLLBACK');
-      }
       logger.error('Error unlinking OAuth account', { 
         userId, 
         provider, 

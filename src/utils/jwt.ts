@@ -19,6 +19,7 @@ export async function generateAccessToken(payload: UserPayload): Promise<string>
     const jwtPayload: JWTPayload = {
       ...payload,
       sessionId: uuidv4(),
+      type: 'access',
     };
 
     return jwt.sign(jwtPayload as any, appConfig.security.jwtSecret, {
@@ -38,6 +39,7 @@ export async function generateRefreshToken(payload: UserPayload): Promise<string
     const jwtPayload: JWTPayload = {
       ...payload,
       sessionId: uuidv4(),
+      type: 'refresh',
     };
 
     return jwt.sign(jwtPayload as any, appConfig.security.jwtSecret, {
@@ -55,6 +57,13 @@ export async function generateRefreshToken(payload: UserPayload): Promise<string
 export async function validateAccessToken(token: string): Promise<TokenValidationResult> {
   try {
     const decoded = jwt.verify(token, appConfig.security.jwtSecret) as JWTPayload;
+
+    if (decoded.type === 'refresh') {
+      return {
+        valid: false,
+        error: 'Invalid token'
+      };
+    }
     
     return {
       valid: true,
@@ -88,6 +97,13 @@ export async function validateAccessToken(token: string): Promise<TokenValidatio
 export async function validateRefreshToken(token: string): Promise<TokenValidationResult> {
   try {
     const decoded = jwt.verify(token, appConfig.security.jwtSecret) as JWTPayload;
+
+    if (decoded.type !== 'refresh') {
+      return {
+        valid: false,
+        error: 'Invalid refresh token'
+      };
+    }
     
     return {
       valid: true,
@@ -176,8 +192,9 @@ export function isTokenExpired(token: string): boolean {
  * Verify token and extract payload
  */
 export function verifyToken(token: string): JWTPayload {
+  let decoded: JWTPayload;
   try {
-    return jwt.verify(token, appConfig.security.jwtSecret) as JWTPayload;
+    decoded = jwt.verify(token, appConfig.security.jwtSecret) as JWTPayload;
   } catch (error) {
     if (error instanceof jwt.TokenExpiredError) {
       throw new TokenExpiredError('Token has expired');
@@ -188,6 +205,15 @@ export function verifyToken(token: string): JWTPayload {
       throw new JWTError('Token verification failed', 'TOKEN_VERIFICATION_FAILED', 500);
     }
   }
+
+  // Refresh tokens share the signing secret; they must never authenticate a
+  // request as if they were access tokens (they live 7d and survive logout of
+  // the access token).
+  if (decoded.type === 'refresh') {
+    throw new TokenInvalidError('Invalid token');
+  }
+
+  return decoded;
 }
 
 /**
