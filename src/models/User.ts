@@ -288,6 +288,28 @@ export class UserModel {
     }
   }
 
+  /**
+   * The user proved control of their email through an OAuth provider that
+   * marks it verified. If the account was still unverified, its password was
+   * set by someone who never proved they own the address (possibly a squatter
+   * waiting for the owner to verify it), so it is discarded; the owner can set
+   * one via password reset.
+   */
+  static async markEmailVerifiedViaOAuth(userId: string, client?: PoolClient): Promise<void> {
+    const query = `
+      UPDATE users
+      SET password_hash = CASE WHEN email_verified THEN password_hash ELSE NULL END,
+          email_verified = TRUE,
+          email_verified_at = COALESCE(email_verified_at, NOW())
+      WHERE id = $1
+    `;
+    if (client) {
+      await client.query(query, [userId]);
+    } else {
+      await db.query(query, [userId]);
+    }
+  }
+
   // OAuth-related methods
   static async createFromOAuth(
     input: CreateOAuthUserInput,
@@ -297,8 +319,8 @@ export class UserModel {
     const now = new Date();
     
     const userQuery = `
-      INSERT INTO users (id, email, created_at, updated_at, status, email_verified, first_name, last_name, oauth_providers, failed_login_attempts)
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      INSERT INTO users (id, email, created_at, updated_at, status, email_verified, first_name, last_name, oauth_providers, failed_login_attempts, email_verified_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CASE WHEN $6::boolean THEN NOW() END)
       RETURNING id, email, created_at, updated_at, status, email_verified, last_login, failed_login_attempts, locked_until, first_name, last_name, oauth_providers
     `;
 

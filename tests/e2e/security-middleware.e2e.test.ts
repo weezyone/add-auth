@@ -48,11 +48,11 @@ describe('security middleware', () => {
 
     it('does not throttle a signed-in user\'s normal use of /api/auth (successful requests)', async () => {
       // The blanket /api/auth limiter allowed 10 requests per 15 min per IP,
-      // counting every request; register -> login -> a few /me calls was
-      // enough to lock a real user (or a whole office NAT) out.
+      // counting every request; register -> verify -> login -> a few /me
+      // calls was enough to lock a real user (or a whole office NAT) out.
       const client = new Client(app);
-      const reg = await client.register();
-      const token = reg.body.tokens.accessToken;
+      const { login } = await client.signUp();
+      const token = login.body.tokens.accessToken;
       const statuses: number[] = [];
       for (let i = 0; i < 15; i++) {
         statuses.push((await client.get('/api/auth/me').set('Authorization', `Bearer ${token}`)).status);

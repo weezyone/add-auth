@@ -57,6 +57,10 @@ const envSchema = z.object({
   GITHUB_CLIENT_ID: z.string().optional(),
   GITHUB_CLIENT_SECRET: z.string().optional(),
   OAUTH_CALLBACK_URL: z.string().default('http://localhost:3000/auth/callback'),
+
+  // Email verification
+  FRONTEND_URL: z.string().default('http://localhost:3000'),
+  EMAIL_VERIFICATION_TTL_HOURS: z.coerce.number().positive().default(24),
 });
 
 // Validate environment variables
@@ -117,6 +121,12 @@ export const appConfig = {
       clientSecret: env.GITHUB_CLIENT_SECRET,
     },
     callbackUrl: env.OAUTH_CALLBACK_URL,
+  },
+  emailVerification: {
+    // Links point at the frontend, which POSTs the token to /api/auth/verify-email
+    // (a GET that verifies would be consumed by mail-scanner link prefetching).
+    frontendUrl: env.FRONTEND_URL,
+    ttlHours: env.EMAIL_VERIFICATION_TTL_HOURS,
   },
 };
 

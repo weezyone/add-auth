@@ -20,11 +20,7 @@ describe('Redis session management', () => {
   afterAll(teardownInfrastructure);
 
   async function registerAndLogin(client: Client, email = uniqueEmail()) {
-    const reg = await client.register(email);
-    expect(reg.status).toBe(201);
-    const login = await client.login(email);
-    expect(login.status).toBe(200);
-    return { email, userId: reg.body.user.id as string, login };
+    return client.signUp(email);
   }
 
   it('stores the login session in Redis (and a Postgres backup row)', async () => {
@@ -45,8 +41,7 @@ describe('Redis session management', () => {
 
   it('rememberMe uses the 7-day TTL', async () => {
     const client = new Client(app);
-    const email = uniqueEmail();
-    await client.register(email);
+    const { email } = await client.signUp();
     const login = await client.post('/api/auth/login', { email, password: STRONG_PASSWORD, rememberMe: true });
     expect(login.status).toBe(200);
     const ttl = await getRedisClient().ttl(`session:${login.body.session.id}`);
@@ -95,7 +90,7 @@ describe('Redis session management', () => {
     expect(steal.status).toBe(404);
     expect(await getRedisClient().get(`session:${secondId}`)).not.toBeNull();
 
-    // alice's cookie now points at the second session; revoke the register-time one
+    // alice's cookie now points at the second session; revoke the first one
     const list = await alice.get('/api/auth/sessions');
     const other = list.body.sessions.find((s: any) => !s.is_current);
     const revoke = await alice.delete(`/api/auth/sessions/${other.id}`);
@@ -128,15 +123,13 @@ describe('Redis session management', () => {
 
   it('caps concurrent sessions at 5 per user, evicting the oldest', async () => {
     const client = new Client(app);
-    const email = uniqueEmail();
-    const reg = await client.register(email); // session #1
-    const userId = reg.body.user.id;
+    const { email, userId, login: first } = await client.signUp(); // session #1
     for (let i = 0; i < 5; i++) {
       expect((await client.login(email)).status).toBe(200);
     }
     const ids = await getRedisClient().sMembers(`user_sessions:${userId}`);
     expect(ids.length).toBe(5);
-    expect(ids).not.toContain(reg.body.session.id);
+    expect(ids).not.toContain(first.body.session.id);
   });
 
   it('destroys the session when the cookie is replayed from a different User-Agent', async () => {

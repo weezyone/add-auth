@@ -8,7 +8,9 @@ import nock from 'nock';
 import request from 'supertest';
 import type { Express } from 'express';
 import { db } from '../../src/database/connection';
-import { setupInfrastructure, resetState, teardownInfrastructure } from './helpers';
+import {
+  setupInfrastructure, resetState, teardownInfrastructure, loadApp, Client, STRONG_PASSWORD,
+} from './helpers';
 
 type Agent = ReturnType<typeof request.agent>;
 
@@ -123,6 +125,32 @@ describe('OAuth + RBAC (src/app.ts)', () => {
       const dash = await agent.get('/dashboard');
       expect(dash.status).toBe(200);
       expect(dash.body.userId).toBe(user.id);
+    });
+
+    it('an OAuth sign-up with a verified provider email counts as verified (timestamped)', async () => {
+      await oauthLogin(app, 'google', () => mockGoogle(googleProfile()));
+      const user = (await db.query("SELECT * FROM users WHERE email = 'ada@example.com'")).rows[0];
+      expect(user.email_verified).toBe(true);
+      expect(user.email_verified_at).not.toBeNull();
+    });
+
+    it('a verified Google sign-in to an unverified password account verifies it and voids the unverified password', async () => {
+      // Pre-account-takeover: someone registers the victim's address with a
+      // password they know, then waits for the real owner to verify it.
+      const squatter = new Client(loadApp());
+      expect((await squatter.register('ada@example.com')).status).toBe(201);
+
+      await oauthLogin(app, 'google', () => mockGoogle(googleProfile()));
+      const user = (await db.query("SELECT * FROM users WHERE email = 'ada@example.com'")).rows;
+      expect(user).toHaveLength(1);
+      expect(user[0].email_verified).toBe(true);
+      expect(user[0].email_verified_at).not.toBeNull();
+      expect(user[0].password_hash).toBeNull();
+
+      // The squatter's password no longer gets in
+      const login = await squatter.login('ada@example.com', STRONG_PASSWORD);
+      expect(login.status).toBe(401);
+      expect(login.body.tokens).toBeUndefined();
     });
 
     it('logs a returning Google user into the same account', async () => {

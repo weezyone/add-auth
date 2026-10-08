@@ -4,6 +4,8 @@ These tests boot the real Express apps (`src/index.ts` — JWT/Redis-session API
 `src/app.ts` — express-session + Passport OAuth + RBAC) in-process with
 supertest, against a real PostgreSQL database and a real Redis. OAuth providers
 (Google, GitHub) are mocked with `nock`; no real credentials are needed.
+Outgoing email goes to an in-memory mailbox (`mailbox` in `helpers.ts`), so
+tests read verification links straight from the "sent" emails.
 
 ## Requirements
 
@@ -34,11 +36,11 @@ Migrations run automatically at suite start; tables are truncated between tests.
 | Suite | Covers |
 | --- | --- |
 | `app-boot` | both apps import/boot under `NODE_ENV=test` |
-| `core-flow` | register → login → access token → refresh → logout, token-type checks, refresh revocation |
+| `core-flow` | register → email verification → login → access token → refresh → logout, token-type checks, refresh revocation |
+| `email-verification` | unverified login refused (`EMAIL_NOT_VERIFIED`), token hashing/expiry/single use, resend (enumeration-safe, rate limited), refresh for unverified users, migration 006 grandfathering |
 | `csrf` | token issue/reuse, missing/forged token, cookie-only token rejected |
 | `sessions` | Redis session listing/revocation, multi-device, fingerprint trust score |
 | `security-middleware` | XSS sanitising, SQLi blocking, rate limiting, `X-Forwarded-For` spoofing |
 | `oauth-rbac` | Google/GitHub sign-up & login, OAuth `state`, verified-email linking, RBAC 401/403 |
 
-Not covered: email verification (not implemented in the codebase yet),
-password reset, the `/api/roles` routes (not mounted).
+Not covered: password reset, the `/api/roles` routes (not mounted).

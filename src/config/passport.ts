@@ -78,6 +78,9 @@ if (appConfig.oauth.google.clientId && appConfig.oauth.google.clientSecret) {
               
               if (user) {
                 // Link existing account with Google OAuth
+                if (!user.email_verified) {
+                  await UserModel.markEmailVerifiedViaOAuth(user.id);
+                }
                 await UserModel.linkOAuthAccount(user.id, 'google', profile.id, {
                   accessToken,
                   refreshToken,
@@ -193,6 +196,9 @@ if (appConfig.oauth.github.clientId && appConfig.oauth.github.clientSecret) {
               
               if (user) {
                 // Link existing account with GitHub OAuth
+                if (!user.email_verified) {
+                  await UserModel.markEmailVerifiedViaOAuth(user.id);
+                }
                 await UserModel.linkOAuthAccount(user.id, 'github', profile.id, {
                   accessToken,
                   refreshToken,
